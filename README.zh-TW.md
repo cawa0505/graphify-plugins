@@ -6,6 +6,10 @@ Graphify **內嵌型 plugin**：程式碼知識圖譜與非結構化文件之間
 spec 區塊與程式碼 symbol 的雙向追蹤（doc → code / code → doc）及雙向 drift
 稽核。以原生 Rust crate 實作 `GraphifyPlugin` trait，與 Graphify Core 直接整合。
 
+Layer 2 向量搜尋連接 [**OpenDocuments**](https://github.com/cawa0505/OpenDocuments)
+（透過其 REST API `POST /api/v1/search`）；跨 repo 契約見
+[`OpenDocuments/docs/OpenDocuments-Requirements.md`](https://github.com/cawa0505/OpenDocuments/blob/main/docs/OpenDocuments-Requirements.md)。
+
 ## 為什麼是 Plugin（不是純 MCP）
 
 純 MCP 只能讓 Agent 分別查詢文件和程式碼，兩者在 Agent 腦中是孤立資訊，需

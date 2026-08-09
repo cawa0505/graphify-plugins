@@ -8,6 +8,11 @@ symbols (doc → code / code → doc), plus bidirectional drift auditing. Implem
 as a native Rust crate that implements the `GraphifyPlugin` trait and integrates
 directly with Graphify Core.
 
+Layer 2 vector search connects to [**OpenDocuments**](https://github.com/cawa0505/OpenDocuments)
+(via its REST API at `POST /api/v1/search`); see
+[`OpenDocuments/docs/OpenDocuments-Requirements.md`](https://github.com/cawa0505/OpenDocuments/blob/main/docs/OpenDocuments-Requirements.md)
+for the cross-repo contract.
+
 ## Why a Plugin (Not Just MCP)
 
 Pure MCP lets an Agent query documents and code separately, but the results are
