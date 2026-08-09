@@ -18,6 +18,7 @@ use thiserror::Error;
 pub mod backend;
 pub mod links;
 pub mod registry;
+pub mod skill_install;
 pub mod spec;
 pub mod sync;
 
