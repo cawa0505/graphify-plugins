@@ -44,9 +44,11 @@ plugin provides three cross-domain capabilities MCP cannot:
 - `SpecSearchBackend` trait (pure Rust interface).
 - Current implementation: `NoOpBackend` (returns empty; hard links take
   priority).
-- `McpBackend`: injected by graphify-mcp at startup, forwards via MCP-to-MCP
-  to opendoc-mcp. Not a path dep on `opendoc-storage` (due to `libsqlite3-sys`
-  version conflict between `sqlx 0.7` and `rusqlite 0.32`).
+- `RestBackend`: built into the plugin, calls the OD REST API directly via
+  `ureq` (`POST /api/v1/search`, `X-Workspace` header). Enabled when an OD
+  base URL is set; falls back to `NoOpBackend` otherwise. Not a path dep on
+  `opendoc-storage` (due to `libsqlite3-sys` version conflict between
+  `sqlx 0.7` and `rusqlite 0.32`).
 - Workspace mapping: manually configured, stored in plugin SQLite.
 
 ## MCP Efficiency Layer

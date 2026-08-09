@@ -45,7 +45,7 @@ Graphify 的記憶體知識圖譜涵蓋程式碼（AST 語意樹），但非結�
 
 - `SpecSearchBackend` trait（純 Rust 介面）。
 - 現行 `NoOpBackend`（回空，硬鏈結優先）。
-- `McpBackend`：graphify-mcp 啟動時注入，透過 MCP-to-MCP 轉發打 opendoc-mcp。
+- `RestBackend`：plugin 內建，以 ureq 直連 OD REST API（Layer 2 啟用）。
 - workspace mapping：手動設定，存 plugin SQLite。
 
 ### 為什麼分兩層
@@ -53,10 +53,10 @@ Graphify 的記憶體知識圖譜涵蓋程式碼（AST 語意樹），但非結�
 Layer 1 的硬鏈結是核心價值：文件中明確標記的 symbol 對應是確定性 match，
 不需要向量搜尋。這層現在就能完整實作與測試。
 
-Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時才需要。但 OpenDocuments
-的搜尋管線尚未完成（`opendoc-storage::search_and_rerank` 為 stub，
-`opendoc-mcp` 僅有 MockSearch，live MCP `opendocuments_search` 回傳空陣列）。
-因此 Layer 2 先定義介面，不接未完成 backend。
+Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時才需要。OpenDocuments
+的 R1-R5（search endpoint / index path / workspace 隔離 / TEXT id）已驗證
+通過，plugin 以 ureq 直連 OD REST API。Layer 2 先定義介面 + RestBackend
+實作；未設定 OD base URL 時回退 NoOp。
 
 ## 3. Key Decisions
 
@@ -65,11 +65,11 @@ Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時才需要。但
 | 實作語言 | Rust（原生 crate） | Graphify core 為 Rust |
 | 通訊方式 | 無 — 直接編譯併入 core（in-process） | 避免 JSON-RPC / Stdio / IPC 開銷 |
 | Trait 契約 | `graphify-core` v1 `GraphifyPlugin`（同步） | `workspace_key` 為跨 plugin 硬對齊鍵 |
-| 業務 API | 同步公開函式（非 trait 方法） | 與 trait 一致；Layer 2 async 在 McpBackend 處理 |
+| 業務 API | 同步公開函式（非 trait 方法） | 與 trait 一致；Layer 2 同步 ureq 呼叫 |
 | Markdown 解析 | pulldown-cmark | 純 Rust、無系統依賴、AST 級解析 |
 | 文件檢索（Layer 1） | 硬鏈結確定性 match + SQLite registry | 0ms、零誤判、零外部依賴 |
-| 文件檢索（Layer 2） | `SpecSearchBackend` trait，MCP 轉發 | OD 搜尋管線未完成；不 bundle 未完成依賴 |
-| Layer 2 傳輸 | MCP-to-MCP 轉發（graphify-mcp → opendoc-mcp） | 避免 libsqlite3-sys 衝突；不在 plugin 內發 HTTP |
+| 文件檢索（Layer 2） | `SpecSearchBackend` trait，RestBackend（ureq） | OD R1-R5 已驗證；未設定 URL 時 NoOp |
+| Layer 2 傳輸 | plugin 內 ureq 直連 OD REST API | 避免 libsqlite3-sys 衝突；同步、無 tokio |
 | Graph 邊界 | plugin 自有 registry + query-time merge | `GraphifyPlugin` v1 無直接 graph handle；不修改 Core |
 | `implements_spec` 邊 | query-time virtual edge（不持久化進 Core graph） | Q1 決策 (a) |
 | workspace mapping | 手動設定，存 plugin SQLite | 可控、不猜測、不自動建立 |
@@ -78,8 +78,9 @@ Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時才需要。但
 
 ## 4. Out of Scope
 
-- **Layer 2 真 backend 實作**：待 OpenDocuments 搜尋管線完成後，在 graphify-mcp
-  側實作 McpBackend。本提案只定義 trait 介面 + NoOp fallback。
+- **Layer 2 真 backend 實作**：RestBackend（ureq 直連 OD REST API）在 plugin
+  內實作；未設定 OD base URL 時以 NoOp fallback。向量檢索品質（RRF 調參、
+  threshold）為 OD 端職責。
 - **Qdrant / 長期語意記憶**：與 handoff plugin 相同，RAG 供給邊界未定。
   opendoc 插件不自行 bundle 向量資料庫。
 - **16ms BFS Trace 量測**：為 Graphify Core 的效能目標，非本 plugin 的 SLA。

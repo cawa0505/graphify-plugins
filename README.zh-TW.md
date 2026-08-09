@@ -38,7 +38,8 @@ spec 區塊與程式碼 symbol 的雙向追蹤（doc → code / code → doc）�
 
 - `SpecSearchBackend` trait（純 Rust 介面）。
 - 現行實作：`NoOpBackend`（回空；硬鏈結優先）。
-- `McpBackend`：graphify-mcp 啟動時注入，透過 MCP-to-MCP 轉發打 opendoc-mcp。
+- `RestBackend`：plugin 內建，以 ureq 直連 OD REST API（`POST /api/v1/search`，
+  `X-Workspace` header）。設定 OD base URL 時啟用，否則回退 `NoOpBackend`。
   不 path-dep `opendoc-storage`（因 `sqlx 0.7` 與 `rusqlite 0.32` 的
   `libsqlite3-sys` 版本衝突）。
 - workspace mapping：手動設定，存 plugin SQLite。

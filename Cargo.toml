@@ -17,6 +17,8 @@ sha1 = "0.10"
 pulldown-cmark = "0.12"
 rusqlite = { version = "0.32", features = ["bundled"] }
 thiserror = "1"
+# ponytail: 預設關閉 tls（OD 本機 http://127.0.0.1:3006）；需要 https 時加 "tls" feature。
+ureq = { version = "2", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3"

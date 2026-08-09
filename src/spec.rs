@@ -120,7 +120,7 @@ pub fn heading_level_of(level: HeadingLevel) -> u8 {
 }
 
 /// spec_id = sha1(doc_path + heading) 的前 12 字 hex。
-fn spec_id_for(doc_path: &str, heading: &str) -> String {
+pub fn spec_id_for(doc_path: &str, heading: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(doc_path.as_bytes());
     hasher.update(heading.as_bytes());

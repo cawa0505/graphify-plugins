@@ -55,7 +55,7 @@ Markdown 中的 `# Symbol: crate::auth::verify_token`，達成 100% 確定性匹
 （0ms，不走向量）。
 
 **軟性檢索（Soft Hybrid Search）**：沒有硬鏈結時，才落回向量 + 全文混合搜尋
-（Layer 2，透過 MCP 轉發至 OpenDocuments）。
+（Layer 2，透過 REST API 直連 OpenDocuments 伺服器）。
 
 ## 2. 架構總覽
 
@@ -77,7 +77,7 @@ Layer 1（plugin 自有領域，零外部依賴，現可實作）
 Layer 2（向量軟搜尋，抽象為 trait，現行 NoOp）
   SpecSearchBackend trait（純 Rust 介面）
   NoOpBackend（現行 fallback，回空）
-  McpBackend：graphify-mcp 啟動時注入，透過 MCP-to-MCP 轉發打 opendoc-mcp
+  RestBackend：plugin 內建實作，以 ureq 直連 OD REST API（Layer 2 啟用時）
   workspace mapping：手動設定，存 plugin SQLite
 ```
 
@@ -88,10 +88,10 @@ Layer 1 的硬鏈結是核心價值：文件中以 `# Symbol: <name>` 或 `@spec
 搜尋，0ms，零誤判。這層現在就能完整實作與測試。
 
 Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時（文件未標記 symbol），
-才需要向量近似搜尋。但 OpenDocuments 的搜尋管線尚未完成（
-`opendoc-storage::search_and_rerank` 為 stub，`opendoc-mcp` 僅有 MockSearch，
-live MCP `opendocuments_search` 回傳空陣列）。因此 Layer 2 先定義介面，
-不接未完成 backend。
+才需要向量近似搜尋。OpenDocuments 的 R1-R5（search endpoint / index path /
+workspace 隔離 / TEXT id）已驗證通過，plugin 以 ureq 直連 OD REST API
+（`POST /api/v1/search`）實作 `RestBackend`；未設定 OD base URL 時回退
+`NoOpBackend`。
 
 ## 3. 契約基準（以 graphify-core v1 為準）
 
@@ -147,9 +147,9 @@ pub fn audit_drift(&self) -> Result<Vec<DriftItem>, Error>;
 pub fn set_workspace_mapping(&self, od_workspace_id: &str) -> Result<(), Error>;
 ```
 
-業務 API 為**同步**（與 `GraphifyPlugin` trait 一致）。Layer 2 的向量搜尋
-未來若為 async，在 graphify-mcp 的 McpBackend 處理，不影響 plugin 本體的
-同步介面。
+業務 API 為**同步**（與 `GraphifyPlugin` trait 一致）。Layer 2 的 ureq
+呼叫為同步阻塞；若 OD 端未來改 async API，在 RestBackend 內處理，不影響
+plugin 本體的同步介面。
 
 ### 資料結構
 
@@ -249,24 +249,27 @@ CREATE TABLE IF NOT EXISTS opendoc_workspace_mapping (
 ### 6.1 介面
 
 ```rust
-/// 向量軟搜尋介面（Layer 2）。現行 impl = NoOpBackend（回空）。
+/// 向量軟搜尋介面（Layer 2）。現行 impl = NoOpBackend（回空）或 RestBackend（連 OD）。
 pub trait SpecSearchBackend: Send + Sync {
     /// 依 query 搜尋文件 chunk，回傳最相關的 spec 區塊。
-    fn search(&self, workspace_key: &str, query: &str) -> Vec<SearchHit>;
+    fn search(&self, od_workspace_id: &str, query: &str) -> Vec<SearchHit>;
 }
 
 pub struct SearchHit {
     pub doc_path: String,
     pub spec_id: String,
-    pub score: f32,
+    pub heading: Option<String>,  // OD R2：原始 heading 原文，plugin 算回內部 spec_id
+    pub score: f64,
 }
 
 /// 現行 fallback：永遠回空（硬鏈結優先，無硬鏈結時無軟搜尋）。
 pub struct NoOpBackend;
 
-/// 真 backend：graphify-mcp 啟動時注入，透過 MCP-to-MCP 轉發打 opendoc-mcp。
-/// 不在 plugin 內實作；plugin 只持有 trait object。
-pub struct McpBackend { /* graphify-mcp 側實作 */ }
+/// 真 backend：plugin 內建，以 ureq 直連 OD REST API（`POST /api/v1/search`）。
+/// 不走 MCP 轉發，也不 path-dep `opendoc-storage`（libsqlite3-sys 衝突，見 §6.4）。
+pub struct RestBackend {
+    base_url: String,   // 例如 http://127.0.0.1:3006
+}
 ```
 
 Plugin 透過 `with_backend()` builder 注入 backend：
@@ -279,26 +282,30 @@ pub fn with_backend(mut self, backend: Box<dyn SpecSearchBackend>) -> Self {
 ```
 
 - 預設 `NoOpBackend`（Layer 1 獨立運作，不需 OD）。
-- graphify-mcp 啟動時注入 `McpBackend`（Layer 2 啟用）。
+- 設定 OD base URL（CLI `--od-url` / MCP 注入）時以 `RestBackend` 啟用 Layer 2。
 
-### 6.2 傳輸方式：MCP 轉發
+### 6.2 傳輸方式：REST API 直連（ureq）
 
 Layer 2 不直接 path-dep `opendoc-storage`（libsqlite3-sys 衝突，見 §6.4），
-也不在 plugin 內發 HTTP。而是透過 **MCP-to-MCP 轉發**：
+改以同步 HTTP client（ureq，無 tokio，無 async runtime）直連 OD 的
+REST API：
 
 ```
 Plugin (in-process)
   → SpecSearchBackend trait
-  → McpBackend (graphify-mcp 側實作)
-  → opendoc-mcp 的 search tool（MCP stdio）
-  → OpenDocuments Node.js backend（真 RAG：LanceDB + Qdrant）
+  → RestBackend (plugin 內建, ureq)
+  → OpenDocuments server REST API: POST /api/v1/search
 ```
 
-- Plugin 只持有 `Box<dyn SpecSearchBackend>`，不知道傳輸細節。
-- `McpBackend` 在 graphify-mcp crate 實作，透過 MCP 協議呼叫 opendoc-mcp 的
-  search tool。
-- opendoc-mcp 轉發至 Node.js backend 的 REST API（`/api/v1/search`）。
-- Qdrant Collection 在 OD 端，不在 plugin 端。Plugin 不 bundle 向量資料庫。
+- ureq 為同步、無 async runtime、無額外 native 依賴（除 rustls）。
+- `search(od_workspace_id, query)`：
+  `POST {base_url}/api/v1/search`，header `X-Workspace: <od_workspace_id>`，
+  body `{"query": <query>, "top_k": 5}` → 解析 `{hits:[{doc_path, spec_id,
+  heading, score, snippet}]}` → 轉 `SearchHit`。
+- OD 端驗收依 `docs/OpenDocuments-Requirements.md` 8.1 測試程序（T1-T7 已過）。
+- 網路錯誤 / 非 200 / 解析失敗 → 回空（Layer 1 不受影響，永不因 Layer 2 失敗
+  而 panic）。
+- Qdrant / 向量資料庫在 OD 端，不在 plugin 端。Plugin 不 bundle 向量資料庫。
 
 ### 6.3 Workspace Mapping（手動設定）
 
@@ -312,8 +319,8 @@ pub fn set_workspace_mapping(&self, od_workspace_id: &str) -> Result<(), Error>;
 
 - 使用者透過 CLI 或 MCP tool 明確設定對映。
 - 存 `opendoc_workspace_mapping` 表。
-- Layer 2 搜尋時：查表取得 `od_workspace_id` → 傳給 McpBackend →
-  McpBackend 帶 `X-Workspace` header 呼叫 opendoc-mcp。
+- Layer 2 搜尋時：查表取得 `od_workspace_id` → 傳給 RestBackend →
+  RestBackend 帶 `X-Workspace` header 呼叫 OD `/api/v1/search`。
 - 未設定 mapping 時，Layer 2 搜尋回空（不猜測、不自動建立）。
 
 ### 6.4 為什麼不能 path-dep `opendoc-storage`
@@ -323,7 +330,7 @@ pub fn set_workspace_mapping(&self, od_workspace_id: &str) -> Result<(), Error>;
 Cargo 規則：同一 dependency graph 只允許一個 `links = "sqlite3"` 的 package。
 兩個 `libsqlite3-sys` 版本無法共存。
 
-因此 Layer 2 透過 MCP 轉發，不把 `opendoc-storage` 的重型依賴塞進 plugin。
+因此 Layer 2 以 ureq 直連 OD REST API，不把 `opendoc-storage` 的重型依賴塞進 plugin。
 
 ## 7. MCP 效率層
 
@@ -359,7 +366,7 @@ Plugin 不直接持有 Petgraph，不修改 Graphify Core graph。
   `serde` / `serde_json`、`sha1`、`pulldown-cmark`、`thiserror`。dev: `tempfile`。
 - **不**依賴 `opendoc-storage` / `opendoc-types`（libsqlite3-sys 衝突，見 §6.4）。
 - **不**依賴 `async-trait`（業務 API 為同步）。
-- **不**bundle Qdrant / 向量資料庫（Layer 2 透過 MCP 轉發，向量在 OD 端）。
+- **不**bundle Qdrant / 向量資料庫（Layer 2 直連 OD REST API，向量在 OD 端）。
 
 ## 10. 安全與開源去識別
 

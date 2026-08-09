@@ -22,7 +22,7 @@ pub mod skill_install;
 pub mod spec;
 pub mod sync;
 
-pub use backend::{NoOpBackend, SearchHit, SpecSearchBackend};
+pub use backend::{NoOpBackend, RestBackend, SearchHit, SpecSearchBackend};
 pub use links::{LinkRow, discover_doc_paths, index_docs as extract_link_rows};
 pub use registry::LinkDb;
 pub use spec::SpecBlock;
@@ -89,6 +89,13 @@ impl OpendocPlugin {
     pub fn with_backend(mut self, backend: Box<dyn SpecSearchBackend>) -> Self {
         self.backend = Some(backend);
         self
+    }
+
+    /// 便利：以 OD base URL 直接注入 [`RestBackend`]（Layer 2 啟用）。未設 URL
+    /// 請使用 [`OpendocPlugin::new`]（預設 [`NoOpBackend`]）。
+    #[must_use]
+    pub fn with_rest_backend(self, base_url: impl Into<String>) -> Self {
+        self.with_backend(Box::new(RestBackend::new(base_url)))
     }
 
     /// CLI 測試輔助：以 cwd 合成 `WorkspaceContext` 直接 `bind`。
@@ -174,12 +181,20 @@ impl OpendocPlugin {
             let hits = self.backend().search(&od_id, symbol);
             return Ok(hits
                 .into_iter()
-                .map(|h| LinkRow {
-                    workspace_key: ctx.workspace_key.clone(),
-                    doc_path: h.doc_path,
-                    spec_id: h.spec_id,
-                    symbol: symbol.to_string(),
-                    signature: String::new(),
+                .map(|h| {
+                    // P1 對映：以 OD 回傳的 (doc_path, heading) 原文算回 plugin
+                    // 內部 spec_id（與 Layer 1 硬連結同一命名空間），而非 OD 的 slug。
+                    let spec_id = match &h.heading {
+                        Some(heading) => spec::spec_id_for(&h.doc_path, heading),
+                        None => h.spec_id.clone(),
+                    };
+                    LinkRow {
+                        workspace_key: ctx.workspace_key.clone(),
+                        doc_path: h.doc_path,
+                        spec_id,
+                        symbol: symbol.to_string(),
+                        signature: String::new(),
+                    }
                 })
                 .collect());
         }
@@ -594,5 +609,76 @@ mod tests {
         let s = String::from_utf8(bytes).unwrap();
         // packet embeds JSON in YAML (escaped quotes), so check the unescaped keyword.
         assert!(s.contains("link_count"), "missing link_count in packet: {s}");
+    }
+
+    // ── P1 對映：Layer 2 hit 的 spec_id 必須落於 Layer 1 命名空間 ──────
+
+    /// 測試專用 backend：固定回傳一組 (doc_path, heading) 命中，無視 query。
+    struct FakeBackend {
+        doc_path: String,
+        heading: String,
+    }
+    impl SpecSearchBackend for FakeBackend {
+        fn search(&self, _od_id: &str, _query: &str) -> Vec<SearchHit> {
+            vec![SearchHit {
+                doc_path: self.doc_path.clone(),
+                spec_id: "unused-od-slug".to_string(),
+                heading: Some(self.heading.clone()),
+                score: 0.7,
+            }]
+        }
+    }
+
+    #[test]
+    fn layer2_hit_spec_id_matches_hard_link_namespace() {
+        // ponytail: 此測試驗證 §6（design.md）最核心不變量 —— OD 回傳的
+        // (doc_path, heading) 經 spec_id_for 計算後，與 Layer 1 硬連結產生的
+        // spec_id 在同一命名空間（一致性 ID），而非 OD 的 slug。沒有這個對齊，
+        // 「hard link 優先 + soft hit 補位」的合併查詢無從運作。
+        //
+        // SpecBlock.heading = heading 原文（不含 `##` 前綴；pulldown-cmark 已剝除），
+        // `# Symbol: X` 則為前一個 block 的 symbol 宣告，不另起 block。
+        let dir = tempdir().unwrap();
+        write_doc(
+            &dir,
+            "auth.md",
+            "## verify_token\n\nValidates tokens.\n\n# Symbol: crate::auth::verify_token\n",
+        );
+
+        // Layer 1：index 並讀回硬連結 spec_id
+        let p = make_plugin(&dir);
+        p.index_all_docs().unwrap();
+        let hard = p
+            .fetch_code_to_doc_context("crate::auth::verify_token")
+            .unwrap();
+        assert_eq!(hard.len(), 1, "Layer 1 must find the hard link");
+        let hard_spec_id = hard[0].spec_id.clone();
+
+        // Layer 2：用另一個 plugin（清掉 registry）+ FakeBackend 模擬 OD 回傳
+        // 與 Layer 1 同一份 auth.md 的 (doc_path="auth.md", heading="verify_token")。
+        let dir2 = tempdir().unwrap();
+        let p2 = OpendocPlugin::new()
+            .with_registry_path(dir2.path().join("links2.db"))
+            .with_backend(Box::new(FakeBackend {
+                doc_path: "auth.md".to_string(),
+                heading: "verify_token".to_string(),
+            }))
+            .bind_for_cli(dir2.path().to_string_lossy().into_owned());
+        p2.set_workspace_mapping("od-test-ws").unwrap();
+
+        // 查不存在的 symbol —— Layer 1 空（registry 空）→ 走 Layer 2 fallback。
+        let soft = p2
+            .fetch_code_to_doc_context("crate::auth::missing_symbol")
+            .unwrap();
+        assert_eq!(soft.len(), 1, "Layer 2 should produce a soft hit");
+        assert_eq!(
+            soft[0].spec_id, hard_spec_id,
+            "Layer 2 spec_id must equal Layer 1 spec_id (same namespace), \
+             got soft={} hard={}",
+            soft[0].spec_id, hard_spec_id
+        );
+        // 同時驗 OD 回傳的 slug 沒被直接使用
+        assert_ne!(soft[0].spec_id, "unused-od-slug");
+        let _ = p; // silence unused binding
     }
 }

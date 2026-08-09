@@ -80,7 +80,10 @@
 ## Task 8: MCP 效率層（graphify-mcp 側，後續）
 - [ ] graphify-mcp 註冊 MCP tools：`opendoc_get_context` /
       `opendoc_audit_drift` / `opendoc_index`
-- [ ] `McpBackend` 實作（graphify-mcp 側）：MCP-to-MCP 轉發打 opendoc-mcp
-- [ ] workspace mapping 注入：graphify-mcp 啟動時帶 `X-Workspace` header
-- [ ] 整合測試：graphify-mcp 啟動時自動註冊 opendoc tools
-- [ ] 待 OpenDocuments 搜尋管線完成後驗證真 backend
+- [ ] `RestBackend` 實作（plugin 內建）：ureq 直連 OD `POST /api/v1/search`，
+      帶 `X-Workspace` header，解析 `{hits:[{doc_path, spec_id, heading,
+      score, snippet}]}` → `SearchHit`
+- [ ] `SearchHit` 加 `heading` 欄位（OD R2），P1 對映測試：
+      sha1(doc_path + heading)[0..12] 與 LinkRow.spec_id 一致
+- [ ] workspace mapping 注入：CLI `--od-url` 設定後以 RestBackend 啟用
+- [ ] OD 端驗收：`docs/OpenDocuments-Requirements.md` 8.1 T1-T7 全綠（已過）
