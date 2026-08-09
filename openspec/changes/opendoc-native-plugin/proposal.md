@@ -2,48 +2,101 @@
 
 ## 1. Problem
 
-Graphify 目前的記憶體知識圖譜只涵蓋程式碼（AST 語意樹），非結構化文件（PDF / DOCX / XLSX / 網頁等）不在圖譜內。工程師在處理跨 code + document 的任務時，需要手動在 Graphify 與 OpenDocuments（RAG 平台）之間切換，兩邊的查詢結果無法互相關聯：
+Graphify 的記憶體知識圖譜涵蓋程式碼（AST 語意樹），但非結構化文件
+（Markdown spec、PDF、DOCX 等）不在圖譜內。純 MCP 只能讓 Agent 分別查詢
+文件和程式碼，兩者在 Agent 腦中是孤立資訊，需消耗大量 Context Window 拼接。
 
-- 無法從「業務意圖查詢」直接取得對應的程式碼影響範圍（doc → code）。
-- 無法從「已知 symbol」反向取得相關的非結構化文件脈絡（code → doc）。
+三個無法用純 MCP 解決的問題：
+
+- **跨域圖譜綁定**：無法將文件 spec 區塊與程式碼 AST 節點連成聯集圖譜。
+- **雙向 drift 偵測**：無法自動偵測「程式碼改了但文檔過期」和「文檔新增了
+  spec 但程式碼沒實作」。
+- **確定性檢索**：純語意搜尋容易因 Embedding 漂移回傳不相干 chunk；需要
+  100% 確定性的硬鏈結匹配。
 
 ## 2. Proposed Solution
 
-在 Graphify 生態加入原生 Rust 內部插件 `graphify-plugin-opendoc`，直接編譯併入 Graphify 核心（無外掛進程、無 Stdio、無 JSON-RPC），作為程式碼圖譜與 OpenDocuments 向量庫之間的橋接層：
+在 Graphify 生態加入原生 Rust 內部插件 `graphify-plugin-opendoc`，實作
+`graphify-core::plugin::GraphifyPlugin` trait，直接編譯併入 Graphify 核心
+（無外掛進程、無 Stdio、無 JSON-RPC）。
 
-```
-OpenDocuments Vector Client (Rust SDK)
-        ↓ 真實向量檢索（零 Mock）
-Entity Resolver（symbol ↔ Graph 節點對齊）
-        ↓
-Graphify Core Memory Graph（Petgraph BFS Trace）
-        ↓
-.toon 序列化（混合檢索最終產出）
-```
+### 三個跨維度能力
 
-### 雙鍵隔離（Dual-Key Alignment）
+1. **跨域圖譜綁定**：將 Markdown Header/Section 變成 AST 上的 Spec 節點，
+   透過 `implements_spec` 跨域邊連接原始碼圖譜。Agent 拿 .toon 拓撲時直接
+   拿到「Spec 業務邏輯 + 程式碼依賴」的完整微型聯集圖譜。
+2. **雙向 drift 偵測**：doc-side（signature 比對）+ code-side（graph 查詢）。
+3. **雙軌儲存**：硬鏈結（`# Symbol:` / `@spec:`）100% 確定性 match（0ms）；
+   軟搜尋（向量 fallback）只在硬鏈結不存在時啟用。
 
-- **`workspace_key`**：Graphify 本地 AST 圖譜的硬性路由鍵（`graphify-core` v1 契約定義，`derive_workspace_key` 產生），確保 BFS Trace 只作用於當前專案的 AST 節點。
-- **OpenDocuments workspace UUID**：呼叫 OpenDocuments Rust Client 時作為 Storage / Vector Engine Query 的硬性 Filter（`doc_meta.workspace_uuid == <uuid>`），確保向量檢索只回傳當前 workspace 的文件。
+### 兩層架構
+
+**Layer 1（plugin 自有領域，現可實作）**：
+
+- pulldown-cmark 解析 Markdown AST → spec block。
+- 硬鏈結（`# Symbol: <name>` / `@spec:<path>`）：100% 確定性文字 match，
+  0ms，零誤判。
+- SQLite link registry（doc ↔ code symbol + workspace mapping）。
+- 雙向查詢 API：doc → code、code → doc。
+- 雙向 drift audit：doc-side（signature 比對）+ code-side（graph 查詢）。
+- `sync_toon`：跨 session 鏈結索引交換。
+
+**Layer 2（向量軟搜尋，trait 介面，現行 NoOp）**：
+
+- `SpecSearchBackend` trait（純 Rust 介面）。
+- 現行 `NoOpBackend`（回空，硬鏈結優先）。
+- `McpBackend`：graphify-mcp 啟動時注入，透過 MCP-to-MCP 轉發打 opendoc-mcp。
+- workspace mapping：手動設定，存 plugin SQLite。
+
+### 為什麼分兩層
+
+Layer 1 的硬鏈結是核心價值：文件中明確標記的 symbol 對應是確定性 match，
+不需要向量搜尋。這層現在就能完整實作與測試。
+
+Layer 2 的向量軟搜尋是 fallback：當硬鏈結不存在時才需要。但 OpenDocuments
+的搜尋管線尚未完成（`opendoc-storage::search_and_rerank` 為 stub，
+`opendoc-mcp` 僅有 MockSearch，live MCP `opendocuments_search` 回傳空陣列）。
+因此 Layer 2 先定義介面，不接未完成 backend。
 
 ## 3. Key Decisions
 
 | 項目 | 決策 | 依據 |
 |------|------|------|
-| 實作語言 | Rust（原生 crate） | Graphify core 為 Rust；零 Mock 直連 Rust SDK |
+| 實作語言 | Rust（原生 crate） | Graphify core 為 Rust |
 | 通訊方式 | 無 — 直接編譯併入 core（in-process） | 避免 JSON-RPC / Stdio / IPC 開銷 |
-| Trait 契約 | 以 `graphify-core` v1 `GraphifyPlugin` 為準 | `workspace_key` 為跨 plugin 硬對齊鍵（SPEC.md 的 `WorkspaceKey`/`workspace_uuid` 命名為草案，以實際 core 契約為準） |
-| 文件檢索 | 真實 OpenDocuments Rust SDK / Storage Layer | 零 Mock 原則：禁止模擬數據 |
-| 效能預算 | 16ms BFS Trace 標記為效能預算，非硬性 SLA | 待 GraphifyRust 確認是否為硬性要求 |
+| Trait 契約 | `graphify-core` v1 `GraphifyPlugin`（同步） | `workspace_key` 為跨 plugin 硬對齊鍵 |
+| 業務 API | 同步公開函式（非 trait 方法） | 與 trait 一致；Layer 2 async 在 McpBackend 處理 |
+| Markdown 解析 | pulldown-cmark | 純 Rust、無系統依賴、AST 級解析 |
+| 文件檢索（Layer 1） | 硬鏈結確定性 match + SQLite registry | 0ms、零誤判、零外部依賴 |
+| 文件檢索（Layer 2） | `SpecSearchBackend` trait，MCP 轉發 | OD 搜尋管線未完成；不 bundle 未完成依賴 |
+| Layer 2 傳輸 | MCP-to-MCP 轉發（graphify-mcp → opendoc-mcp） | 避免 libsqlite3-sys 衝突；不在 plugin 內發 HTTP |
+| Graph 邊界 | plugin 自有 registry + query-time merge | `GraphifyPlugin` v1 無直接 graph handle；不修改 Core |
+| `implements_spec` 邊 | query-time virtual edge（不持久化進 Core graph） | Q1 決策 (a) |
+| workspace mapping | 手動設定，存 plugin SQLite | 可控、不猜測、不自動建立 |
+| `opendoc-storage` 依賴 | 不依賴 | libsqlite3-sys 版本衝突（sqlx 0.7 vs rusqlite 0.32） |
+| Qdrant | 在 OD 端，不在 plugin 端 | Plugin 不 bundle 向量資料庫 |
 
-## 4. Out of Scope（待討論）
+## 4. Out of Scope
 
-- **Qdrant / 長期語意記憶**：與 handoff plugin 相同，RAG 供給邊界未定 — Graphify llm layer vs plugin sidecar。opendoc 插件不自行 bundle 向量資料庫，直連 OpenDocuments 現有 storage。
-- **`async_trait` vs 同步 trait**：SPEC.md 草案使用 `async_trait`，但 graphify-core v1 `GraphifyPlugin` 為同步介面。待 GraphifyRust 對齊後決定插件業務 API（`trace_doc_to_code` / `fetch_code_to_doc_context`）的 async 與否。
-- **16ms Trace 的實際量測方法**：需定義 benchmark 基準（樣本數、硬體、query 複雜度）後才能驗證。
+- **Layer 2 真 backend 實作**：待 OpenDocuments 搜尋管線完成後，在 graphify-mcp
+  側實作 McpBackend。本提案只定義 trait 介面 + NoOp fallback。
+- **Qdrant / 長期語意記憶**：與 handoff plugin 相同，RAG 供給邊界未定。
+  opendoc 插件不自行 bundle 向量資料庫。
+- **16ms BFS Trace 量測**：為 Graphify Core 的效能目標，非本 plugin 的 SLA。
+  硬鏈結查詢為 0ms 確定性 match。
 
-## 5. Open Questions
+## 5. Resolved Questions
 
-- [ ] `workspace_uuid`（OpenDocuments 端）與 `workspace_key`（Graphify 端）的對映規則由誰負責產生與持久化？是否沿用 handoff plugin 的 workspace identity 機制？
-- [ ] OpenDocuments Rust SDK 的 crate 對外暴露形式（published crate vs path/git dep）？
-- [ ] 插件業務 API（trace_doc_to_code / fetch_code_to_doc_context）是給 GraphifyMCP 註冊成 MCP tools，還是只作為內部函式庫？
+- [x] ~~`workspace_uuid` 與 `workspace_key` 的對映規則？~~ → 手動設定，
+  存 plugin SQLite `opendoc_workspace_mapping` 表。Layer 1 不寫入（不跟 OD
+  溝通），Layer 2 搜尋時查表取得 `od_workspace_id`。
+- [x] ~~`async_trait` vs 同步 trait？~~ → 同步。業務 API 為同步公開函式，
+  與 `GraphifyPlugin` trait 一致。Layer 2 的 async 在 McpBackend 側處理。
+- [x] ~~OpenDocuments Rust SDK 的 crate 暴露形式？~~ → 不直接依賴。
+  Layer 2 透過 MCP-to-MCP 轉發，不 path-dep `opendoc-storage`。
+- [x] ~~業務 API 是 MCP tools 還是內部函式庫？~~ → 兩者皆是。為 plugin 公開
+  函式；graphify-mcp 註冊為 MCP tools（`opendoc_get_context` /
+  `opendoc_audit_drift` / `opendoc_index`）。
+- [x] ~~Graph 邊界：spec node 放進 AST graph？~~ → 不放。Plugin 自有
+  registry + query-time merge（Q1 決策 (a)）。`implements_spec` 為 query-time
+  virtual edge。

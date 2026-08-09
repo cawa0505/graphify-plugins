@@ -1,5 +1,14 @@
 # graphify-plugin-opendoc 原生 Rust 內部插件規格文件
 
+> **狀態：歷史草案（superseded）**
+>
+> 本文件為專案初期的規格草案，保留逐字不修改，作為設計演進的歷史記錄。
+> 其中 `OpenDocNativePlugin` trait、`async_trait`、`WorkspaceContext.workspace_uuid`、
+> `GraphOutput`、`GraphifyError`、`crates/graphify-plugin-opendoc` 路徑等命名
+> 已驗證與 Graphify Core v1 實際契約不符。
+>
+> **實作依據請以 `openspec/changes/opendoc-native-plugin/design.md` 為準。**
+
 ## 1. 系統架構與定位 (Native Architecture)
 
 本插件作為 Graphify Monorepo 中的 Native Rust Crate（crates/graphify-plugin-opendoc），直接編譯併入 Graphify 核心，不經過任何外掛進程或 Stdio 通訊。
