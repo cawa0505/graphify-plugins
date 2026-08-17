@@ -2,6 +2,8 @@
 
 Graphify 的外掛生態系集合。每個 Plugin 遵循 **Pure Symbol Bridge** 模式：將外部領域資料（測試覆蓋率、效能追蹤、審查記錄等）與 Graphify 的 canonical AST node 綁定，讓 Agent 透過 .toon 取得全知視角。
 
+Graphify 核心引擎在 [graphify-rust](https://github.com/cawa0505/graphify-rust)。
+
 ## 已實作 Plugins
 
 | Plugin | 外部資料源 | 綁定語意 |
