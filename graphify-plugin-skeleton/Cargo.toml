@@ -1,0 +1,23 @@
+[package]
+name = "graphify-plugin-skeleton"
+version = "0.1.0"
+edition = "2021"
+description = "Graphify plugin: compact AST skeleton extraction for LLM context"
+
+[lib]
+name = "graphify_plugin_skeleton"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tskeleton"
+path = "src/bin/tskeleton.rs"
+
+[dependencies]
+graphify-core = { path = "../../GraphifyRust/graphify-core" }
+anyhow = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "graphify-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "petgraph",
@@ -364,6 +364,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphify-plugin-skeleton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "graphify-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "graphify-plugin-telemetry"
 version = "0.1.0"
 dependencies = [
@@ -392,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "graphify-registry"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "graphify-core",
  "rusqlite",
