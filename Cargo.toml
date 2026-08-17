@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["graphify-plugin-handoff", "graphify-plugin-opendoc", "graphify-plugin-review", "graphify-plugin-telemetry", "graphify-plugin-test-coverage"]
+
+[profile.release]
+opt-level = 3
+lto = true
