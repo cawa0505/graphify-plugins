@@ -1,0 +1,5 @@
+schema: spec-driven
+context: |
+  Tech stack: Rust (edition 2024), tokio, clap, serde, fs2, qdrant-client.
+  This repository is a native Rust-based MCP Server rewriting the original Node.js OpencodeCodeRelayPlugin.
+  We enforce stateful memory-caching of the workspace root to prevent redundant disk walk-up I/O.
