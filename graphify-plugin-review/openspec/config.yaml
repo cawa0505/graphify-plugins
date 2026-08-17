@@ -1,0 +1,12 @@
+# OpenSpec Configuration
+# Used by the OpenSpec tooling to validate change sets.
+
+version: 1
+
+# Agents that may be referenced by specs.
+agents:
+  - id: graphify-rust-core
+    description: GraphifyRust workspace (graphify-core) — defines the v1 GraphifyPlugin contract, WorkspaceContext, and in-memory petgraph GraphOutput.
+
+# Changes directory.
+changes_dir: changes

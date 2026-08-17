@@ -1,0 +1,24 @@
+[package]
+name = "graphify-plugin-review"
+version = "0.1.0"
+edition = "2021"
+description = "Graphify plugin: symbol-native review bridge over code-review-graph data"
+
+[lib]
+name = "graphify_plugin_review"
+path = "src/lib.rs"
+
+[dependencies]
+graphify-core = { path = "../../GraphifyRust/graphify-core" }
+graphify-registry = { path = "../../GraphifyRust/graphify-registry" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+thiserror = "1"
+# CRG MCP client 骨架（Slice 0 僅 framing，Slice 1/2 接真呼叫）。
+ureq = { version = "2", default-features = false, features = ["json"] }
+# ImpactAlert.event_id（design §8.2 uuid v4）。
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
