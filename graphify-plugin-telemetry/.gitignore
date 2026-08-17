@@ -1,0 +1,11 @@
+# Rust build
+target
+
+# Local-only files (never pushed to GitHub)
+AGENTS.md
+LOCAL-NOTES.md
+
+# Local runtime state
+.code-review-graph/
+.cortexkit/
+.opencode/
