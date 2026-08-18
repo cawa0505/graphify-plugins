@@ -14,6 +14,15 @@ Graphify 核心引擎在 [graphify-rust](https://github.com/cawa0505/graphify-ru
 | [test-coverage](graphify-plugin-test-coverage/) | LCOV / pytest-cov | 測試覆蓋率與盲區 |
 | [telemetry](graphify-plugin-telemetry/) | OpenTelemetry / Flamegraph | 線上 Latency / Memory 瓶頸 |
 
+## SDK 生態系
+
+Graphify 的能力可透過跨語言 SDK 從任何專案中呼叫：
+
+| SDK | 語言 | 狀態 | GitHub |
+|-----|------|------|--------|
+| graphify-sdk-php | PHP 8.0+ | ✅ 初步實作 | [cawa0505/graphify-sdk-php](https://github.com/cawa0505/graphify-sdk-php) |
+| graphify-sdk-python | Python | 🔄 開發中 | [cawa0505/graphify-sdk-python](https://github.com/cawa0505/graphify-sdk-python) |
+
 ## 規劃中
 
 - **secguard** — Cargo Audit / Snyk CVE 漏洞綁定
