@@ -8,6 +8,7 @@ Graphify 核心引擎在 [graphify-rust](https://github.com/cawa0505/graphify-ru
 
 | Plugin | 外部資料源 | 綁定語意 |
 |--------|-----------|----------|
+| [argus](graphify-plugin-argus/) | ArgusOrchestrator（`argus graph` JSON） | 編排歷程：phase / worker / evidence / decision 與變動重測訊號 |
 | [handoff](graphify-plugin-handoff/) | Human/Agent Active Session | Agent 當前注意力與任務目標 |
 | [opendoc](graphify-plugin-opendoc/) | RFC / Spec / OpenAPI | 業務規範與設計合約 |
 | [review](graphify-plugin-review/) | code-review-graph | 歷史審查警示與 PR 評語 |

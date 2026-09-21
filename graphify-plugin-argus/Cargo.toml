@@ -1,19 +1,19 @@
 [package]
-name = "graphify-plugin-skeleton"
+name = "graphify-plugin-argus"
 version = "0.1.0"
 edition = "2021"
-description = "Graphify plugin: compact AST skeleton extraction for LLM context"
+description = "Graphify plugin: Argus orchestration evidence bridge (argus graph JSON -> canonical graph, RetestSignal on change)"
 
 [lib]
-name = "graphify_plugin_skeleton"
+name = "graphify_plugin_argus"
 path = "src/lib.rs"
 
 [dependencies]
 graphify-core = { path = "../../GraphifyRust/graphify-core" }
-anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
