@@ -15,9 +15,18 @@ use graphify_core::extract::extract_file;
 
 /// The kind categories we display in the skeleton, ordered by display priority.
 const DISPLAY_ORDER: &[&str] = &[
-    "struct", "enum", "union", "class", "interface", "type",
-    "trait", "impl_block",
-    "function", "method", "const", "static",
+    "struct",
+    "enum",
+    "union",
+    "class",
+    "interface",
+    "type",
+    "trait",
+    "impl_block",
+    "function",
+    "method",
+    "const",
+    "static",
 ];
 
 /// Produce a compact text skeleton for a source file.
@@ -29,8 +38,8 @@ const DISPLAY_ORDER: &[&str] = &[
 /// ```
 pub fn extract_skeleton(path: &str) -> Result<String> {
     let file_path = Path::new(path);
-    let content = fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read {}", path))?;
+    let content =
+        fs::read_to_string(file_path).with_context(|| format!("Failed to read {}", path))?;
     let lines: Vec<&str> = content.lines().collect();
 
     // Use graphify-core's tree-sitter parsers to extract AST nodes
@@ -67,7 +76,8 @@ pub fn extract_skeleton(path: &str) -> Result<String> {
 
     // Build skeleton text
     let mut output = String::new();
-    output.push_str(&format!("// {} — tokens: {} -> {}\n\n",
+    output.push_str(&format!(
+        "// {} — tokens: {} -> {}\n\n",
         file_path.file_name().unwrap_or_default().to_string_lossy(),
         count_tokens(&content),
         estimate_tokens(&groups),
@@ -146,24 +156,21 @@ fn extract_signature(lines: &[&str], start_line: usize, end_line: usize) -> Stri
 
         // For Python/indent-based languages: if this line ends with `:`
         // and the next line has greater indent, the body starts here.
-        if trimmed.ends_with(':') {
-            if i + 1 < end_line.min(lines.len()) {
-                let next = lines[i + 1].trim();
-                if !next.is_empty() && !next.starts_with('#') {
-                    // Check indent: next line is more indented → body starts
-                    let cur_indent = lines[i].len() - lines[i].trim_start().len();
-                    let next_indent = lines[i + 1].len() - lines[i + 1].trim_start().len();
-                    if next_indent > cur_indent {
-                        // Body starts after `:`, keep the signature as-is
-                        break;
-                    }
+        if trimmed.ends_with(':') && i + 1 < end_line.min(lines.len()) {
+            let next = lines[i + 1].trim();
+            if !next.is_empty() && !next.starts_with('#') {
+                // Check indent: next line is more indented → body starts
+                let cur_indent = lines[i].len() - lines[i].trim_start().len();
+                let next_indent = lines[i + 1].len() - lines[i + 1].trim_start().len();
+                if next_indent > cur_indent {
+                    // Body starts after `:`, keep the signature as-is
+                    break;
                 }
             }
         }
     }
 
-    let result = sig.trim().to_string();
-    if result.is_empty() { result } else { result }
+    sig.trim().to_string()
 }
 
 /// Write one group of declarations into the skeleton output.
@@ -205,7 +212,8 @@ fn pluralize_kind(kind: &str) -> &str {
 
 /// Count approximate tokens (whitespace-separated words + punctuation groups).
 fn count_tokens(content: &str) -> usize {
-    content.split_whitespace()
+    content
+        .split_whitespace()
         .flat_map(|w| w.split(|c: char| !c.is_alphanumeric() && c != '_'))
         .filter(|s| !s.is_empty())
         .count()

@@ -81,11 +81,11 @@ cargo test -p graphify-plugin-argus
 cargo clippy -p graphify-plugin-argus --all-targets
 
 # 真資料對接（需 argus binary 與已跑過 phase 的 state）
-ARGUS_E2E_BIN=/path/to/argus ARGUS_E2E_STATE_DIR=/path/to/state \
-  cargo test -p graphify-plugin-argus real_argus_e2e
+ARGUS_BIN=/path/to/argus ARGUS_STATE_DIR=/path/to/state \
+  cargo test -p graphify-plugin-argus --test e2e_real_argus
 ```
 
-未設定 `ARGUS_E2E_BIN` 時 e2e 測試自動 skip（不假造資料）。
+未設定 `ARGUS_BIN`/`ARGUS_STATE_DIR` 時 e2e 測試自動 skip（不假造資料）。
 
 ## 授權
 
