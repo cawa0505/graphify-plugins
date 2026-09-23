@@ -5,7 +5,7 @@ use std::path::Path;
 use tempfile::tempdir;
 
 use super::checks::{check_relay_file, Verdict};
-use super::{apply_fix, check_dir, deletion_targets, exit_code, render, scan};
+use super::{apply_fix, check_dir, check_registry, deletion_targets, exit_code, render, scan};
 
 fn write_relay(dir: &std::path::Path, body: &str) {
     std::fs::write(dir.join("relay.json"), body).unwrap();
@@ -55,7 +55,12 @@ fn monorepo_subdir_entry_not_killed() {
 #[test]
 fn legacy_self_entry_with_stale_bare_path_not_killed() {
     let root = tempdir().unwrap();
-    let name = root.path().file_name().unwrap().to_string_lossy().to_string();
+    let name = root
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let body = format!(
         r#"{{"schema_version":"1.0.0","project_context":"self","active_baton":"{name}","repos":{{"{name}":{{"name":"{name}","path":"{name}"}}}}}}"#
     );
@@ -297,4 +302,73 @@ fn exit_code_contract_after_fix() {
 fn scan_nonexistent_root_yields_empty() {
     let reports = scan(Path::new("/nonexistent/relay-doctor-scan"), None);
     assert!(reports.is_empty());
+}
+
+/// relay-workspace-context D4/task 4.1：registry 的 gateway-cwd 汙染 WARN 檢查。
+#[test]
+fn check_registry_warns_on_home_polluted_record() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("graphify.db");
+    let home = tempdir().unwrap(); // 非 git 的假 $HOME
+    let db = graphify_registry::RegistryDb::open(&db_path).unwrap();
+    let real_key = graphify_core::plugin::derive_workspace_key(home.path());
+    db.upsert_workspace(&real_key, &home.path().display().to_string())
+        .unwrap();
+    let warns = check_registry(&db_path, Some(home.path())).unwrap();
+    assert_eq!(warns.len(), 1, "{warns:?}");
+    assert!(warns[0].1.contains("gateway cwd"), "{:?}", warns[0].1);
+}
+
+/// 合法 git workspace 紀錄 → 不 WARN。
+#[test]
+fn check_registry_clean_on_git_workspace() {
+    let dir = tempdir().unwrap();
+    let ws = dir.path().join("real-ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    root_of_git(&ws); // 真初始化 git 結構
+    let db_path = dir.path().join("graphify.db");
+    let db = graphify_registry::RegistryDb::open(&db_path).unwrap();
+    let key = graphify_core::plugin::derive_workspace_key(&ws);
+    db.upsert_workspace(&key, &ws.display().to_string())
+        .unwrap();
+    let warns = check_registry(&db_path, None).unwrap();
+    assert!(warns.is_empty(), "{warns:?}");
+}
+
+/// 任徑不存在 → 跳過（不 WARN，可能是已刪 repo）。
+#[test]
+fn check_registry_skips_missing_path() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("graphify.db");
+    let db = graphify_registry::RegistryDb::open(&db_path).unwrap();
+    db.upsert_workspace("deadbeef", "/nonexistent/gw-skip-ws")
+        .unwrap();
+    let warns = check_registry(&db_path, None).unwrap();
+    assert!(warns.is_empty(), "{warns:?}");
+}
+
+/// 非 git 且 key 不符（非 $HOME）→ WARN（key mismatch 面向）。
+#[test]
+fn check_registry_warns_on_key_mismatch() {
+    let dir = tempdir().unwrap();
+    let ws = dir.path().join("plain-ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let db_path = dir.path().join("graphify.db");
+    let db = graphify_registry::RegistryDb::open(&db_path).unwrap();
+    db.upsert_workspace("mismatched", &ws.display().to_string())
+        .unwrap();
+    let warns = check_registry(&db_path, None).unwrap();
+    assert_eq!(warns.len(), 1, "{warns:?}");
+    assert!(warns[0].1.contains("key mismatch"), "{:?}", warns[0].1);
+}
+
+/// 真初始化 git 的 helper（`git init -q` 於 ws 內，git_toplevel 可命中）。
+fn root_of_git(ws: &Path) {
+    let out = std::process::Command::new("git")
+        .arg("init")
+        .arg("-q")
+        .current_dir(ws)
+        .output()
+        .expect("git init must run");
+    assert!(out.status.success(), "git init failed: {:?}", out.status);
 }

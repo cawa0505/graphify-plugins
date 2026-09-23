@@ -50,25 +50,34 @@ helpers · write safety · transport (owned by GraphifyMCP).
 
 ## 2. Root resolution
 
-Order of application, exactly:
+Workspace-sovereign model (relay-multi-repo-isolation D4 + relay-workspace-context):
+zero walk-up, identity comes from the **caller's workspace**, never from a
+server process cwd.
 
-1. **Named-repo ops** (`relaySave`/`relayClose`/`relayResume`/`relaySwitch`
-   with `repo`) — resolve purely against the in-memory state loaded from the
-   cached root. Zero walk-up.
-2. **No-repo ops** (`relayStatus`, `relayResume` without repo) — use the root
-   cached at startup.
-3. **`relayInit`** — the only write-style walk: walk up from cwd for the first
-   directory containing `relay.json`; if found, refuse; if not, create a new
-   root at cwd and cache it.
+`workspace_root(start)` applies, in order:
 
-**Startup**: cwd is captured once at server start. Walk up from cwd; if a root
-is found, load its `relay.json` into memory (the in-memory state is the runtime
-source of truth). If none is found, record "no root" and let `relayInit`
-establish one.
+1. `GRAPHIFY_RELAY_ROOT` env override (explicit opt-in; value may be the
+   `relay.json` file itself — its parent is used).
+2. `git_toplevel(start)` — `start` inside a git repo → the repo toplevel.
+3. `start` itself (non-git workspace directories are legitimate workspaces).
 
-**Fail-fast**: any non-init tool with no cached root and no `repo` argument
-returns the error `No relay.json found. Run relayInit first.` — never an
-unbounded search or guess.
+**Binding**: the caller supplies the workspace identity — CLI binds
+`process cwd` (`bind_for_cli`); MCP tools require an absolute `path`
+argument and re-bind per call. Under a gateway topology
+(`opencode → nexus → graphify-mcp stdio child`) the server process cwd is
+`$HOME` (systemd default) and MUST NOT be used to derive identity: MCP
+calls without an absolute `path` return the frozen error
+`workspace context required: pass the absolute path of your workspace`
+with zero file writes.
+
+**relayInit** — refuses to initialize at a non-git `$HOME` (frozen error
+`refusing to init relay at $HOME; run inside a project directory or set
+GRAPHIFY_RELAY_ROOT.`); creates the state file at the workspace root
+otherwise.
+
+**Fail-fast**: any non-init tool with no bound root returns
+`No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.`
+— never an unbounded search or guess.
 
 ## 3. Tools
 
@@ -247,5 +256,6 @@ Target protocol version: `2025-06-18`.
 
 - All return/error texts are frozen strings from the legacy plugin — do not
   rephrase them; consumers may match on them.
-- `repo` defaults to `basename(cwd)` where cwd is the **workspace root** of
-  the Graphify session that bound this plugin, not a per-call directory.
+- `repo` defaults to `basename(workspace root)` — the workspace identity
+  bound by the caller (CLI process cwd, or the MCP `path` argument), never
+  the server process cwd. See §2 for the CLI/MCP semantics split.

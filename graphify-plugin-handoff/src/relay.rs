@@ -454,11 +454,13 @@ fn resolve_repo_path(root: &Path, cwd: &Path, repo: &str) -> Result<PathBuf, Err
     let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let arg = Path::new(repo);
     // (候選路徑, 是否須位於 relay root 內)
-    let candidates: Vec<(PathBuf, bool)> = if arg.is_absolute() {
+    let mut candidates: Vec<(PathBuf, bool)> = if arg.is_absolute() {
         vec![(arg.to_path_buf(), false)]
     } else {
         vec![(root.join(repo), true), (cwd.join(repo), false)]
     };
+    // caller path == root 時兩層同源 → 去重（spec：Tried 候選重複同值 = 回歸信號）
+    candidates.dedup_by(|a, b| a.0.display().to_string() == b.0.display().to_string());
     let mut tried: Vec<String> = Vec::new();
     for (candidate, must_be_in_root) in &candidates {
         tried.push(candidate.display().to_string());
@@ -991,6 +993,28 @@ mod tests {
             std::fs::read(dir.path().join("relay.json")).unwrap(),
             before,
             "拒寫後狀態檔位元組不變"
+        );
+    }
+
+    /// task 1.3 / spec「Tried 候選去重」：caller path == root（direct-spawn 常態）
+    /// 時兩層同源，錯誤訊息的候選不得重複同值（重複 = 回歸信號）。
+    #[test]
+    fn tried_windows_dedup() {
+        let dir = tempdir().unwrap();
+        let mut p = bind(dir.path());
+        p.relay_init("p", None).unwrap();
+        let err = p
+            .relay_save(SaveArgs {
+                repo: Some("Foo"),
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        let candidate = dir.path().join("Foo").display().to_string();
+        assert_eq!(
+            err.matches(&candidate).count(),
+            1,
+            "同源候選須去重（重複 = 回歸信號）: {err}"
         );
     }
 

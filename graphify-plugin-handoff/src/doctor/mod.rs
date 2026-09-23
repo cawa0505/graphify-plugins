@@ -8,6 +8,7 @@ pub mod checks;
 #[cfg(test)]
 mod tests;
 
+use crate::root;
 use std::path::{Path, PathBuf};
 
 pub use checks::{Finding, Verdict};
@@ -125,4 +126,41 @@ pub fn exit_code(reports: &[Report], fix_failures: Option<&[(PathBuf, String)]>)
     } else {
         0
     }
+}
+
+/// relay-workspace-context D4：registry workspace 紀錄的 gateway-cwd 汙染檢查。
+///
+/// WARN 條件（唯讀，實測真實汙染紀錄 `/home/zeng` 的 key 正由 cwd 自身 derive，
+/// key 相符不能作為免查條件）：`root_path` 為存在目錄但取不到 git toplevel（非
+/// git），且 key 不符 **或** `root_path == $HOME`。回傳 (workspace_key, 原因) 清單。
+pub fn check_registry(
+    db_path: &Path,
+    home: Option<&Path>,
+) -> Result<Vec<(String, String)>, String> {
+    use graphify_core::plugin::derive_workspace_key;
+    let db = graphify_registry::RegistryDb::open(db_path).map_err(|e| e.to_string())?;
+    let mut warns = Vec::new();
+    for row in db.list_workspaces().map_err(|e| e.to_string())? {
+        let path = PathBuf::from(&row.root_path);
+        if !path.is_dir() {
+            continue; // 不存在的路徑不在此面管轄（可能是已刪 repo）
+        }
+        if root::git_toplevel(&path).is_some() {
+            continue; // git repo → 合法 workspace
+        }
+        let key_match = derive_workspace_key(&path) == row.workspace_key;
+        let is_home = home.is_some_and(|h| h == path);
+        if !key_match || is_home {
+            let why = if is_home {
+                "registry workspace record likely polluted by gateway cwd ($HOME); verify manually"
+            } else {
+                "registry workspace record likely polluted by gateway cwd (key mismatch); verify manually"
+            };
+            warns.push((
+                row.workspace_key,
+                format!("{} (path: {})", why, row.root_path),
+            ));
+        }
+    }
+    Ok(warns)
 }
