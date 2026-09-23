@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fs2::FileExt;
@@ -18,6 +18,7 @@ use crate::handoff;
 use crate::root::RELAY_JSON;
 use crate::state::{now_iso, Handoff, RelayState, RepoState};
 use crate::{Error, RelayPlugin};
+use graphify_core::plugin::derive_workspace_key;
 use graphify_core::plugin_memory::MemoryQueryCriteria;
 
 // ---------- templates（與 legacy dist/templates/*.md 逐字一致） ----------
@@ -210,9 +211,9 @@ fn consistency_check(root: &Path) -> (bool, Vec<String>) {
     for spec in list_specs(root) {
         let content = std::fs::read_to_string(root.join("specs").join(format!("{spec}.md")))
             .unwrap_or_default();
-        let has_title = content
-            .lines()
-            .any(|l| l.starts_with('#') && l[1..].chars().next().is_some_and(|c| c.is_whitespace()));
+        let has_title = content.lines().any(|l| {
+            l.starts_with('#') && l[1..].chars().next().is_some_and(|c| c.is_whitespace())
+        });
         if !has_title {
             issues.push(format!("{spec}: missing top-level title"));
         }
@@ -224,7 +225,8 @@ fn consistency_check(root: &Path) -> (bool, Vec<String>) {
             issues.push(format!("{spec}: contains BROKEN marker"));
         }
         if let Some(removed) = content.lines().find(|l| {
-            l.to_lowercase().trim_start_matches("##")
+            l.to_lowercase()
+                .trim_start_matches("##")
                 .trim_start()
                 .to_lowercase()
                 .starts_with("removed requirements")
@@ -232,7 +234,9 @@ fn consistency_check(root: &Path) -> (bool, Vec<String>) {
             if let Some(pos) = content.find(removed) {
                 let after = &content[pos + removed.len()..];
                 if !after.trim().is_empty() {
-                    issues.push(format!("{spec}: has REMOVED requirements (reconcile drift)"));
+                    issues.push(format!(
+                        "{spec}: has REMOVED requirements (reconcile drift)"
+                    ));
                 }
             }
         }
@@ -265,26 +269,36 @@ fn fill(template: &str, vars: &BTreeMap<&str, String>) -> String {
     out
 }
 
-fn vars_for(
-    state: &RelayState,
-    root: &Path,
-    repo: &RepoState,
-) -> BTreeMap<&'static str, String> {
-    let repo_dir = root.join(&repo.path);
-    let is_repo = git_is_repo(&repo_dir);
+fn vars_for(state: &RelayState, root: &Path, repo: &RepoState) -> BTreeMap<&'static str, String> {
+    // D1/D3：repo.path 新寫入為絕對路徑、舊檔為 root-relative 裸名（repo_dir_of
+    // 相容兩者）；空 path（僅 relayAdd 未 save）→ git 診斷顯示 path unset。
+    let repo_dir = repo_dir_of(root, repo);
+    // D1：渲染只讀該 repo 自身 context；無自有 → 舊全域欄位（唯讀 fallback）→ (unset)。
+    let project_context = repo
+        .project_context
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| non_empty_or(&state.project_context, "(unset)"));
     let mut vars = BTreeMap::new();
-    vars.insert("project_context", non_empty_or(&state.project_context, "(unset)"));
+    vars.insert("project_context", project_context);
     vars.insert("repo_name", repo.name.clone());
     vars.insert("role", non_empty_or(&repo.role, "(unset)"));
     vars.insert("active_phase", non_empty_or(&repo.active_phase, "(unset)"));
-    vars.insert("volatile_state", non_empty_or(&repo.volatile_state, "(unset)"));
+    vars.insert(
+        "volatile_state",
+        non_empty_or(&repo.volatile_state, "(unset)"),
+    );
     vars.insert("confidence_score", repo.confidence_score.to_string());
     vars.insert(
         "debt_tag",
         if repo.debt_tag.is_empty() {
             "(none)".to_string()
         } else {
-            repo.debt_tag.iter().map(|d| format!("- {d}")).collect::<Vec<_>>().join("\n")
+            repo.debt_tag
+                .iter()
+                .map(|d| format!("- {d}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         },
     );
     vars.insert(
@@ -292,13 +306,38 @@ fn vars_for(
         non_empty_or(&repo.next_session_starter, "(none planned)"),
     );
     vars.insert("last_updated", repo.last_updated.clone());
+    // D3：path 存在但 git 指令失敗 → 可診斷輸出，不用誤導性的 "(not a git repo)"。
+    let git_unavailable = |p: &str| format!("(git status unavailable: {p})");
+    let (git_commit, git_stat) = match &repo_dir {
+        Some(d) if git_is_repo(d) => (git_last_commit(d), git_short_stat(d)),
+        Some(d) => {
+            let msg = git_unavailable(&d.display().to_string());
+            (msg.clone(), msg)
+        }
+        None => {
+            let msg = git_unavailable("(path unset)");
+            (msg.clone(), msg)
+        }
+    };
+    vars.insert("git_commit", git_commit);
+    vars.insert("git_stat", git_stat);
+    // D5：threads 只讀 repo 自身 snapshot；無自有 → 舊全域（唯讀 fallback）。
+    let threads: &Vec<String> = if repo.state_snapshot.open_threads.is_empty() {
+        &state.state_snapshot.open_threads
+    } else {
+        &repo.state_snapshot.open_threads
+    };
     vars.insert(
-        "git_commit",
-        if is_repo { git_last_commit(&repo_dir) } else { "(not a git repo)".to_string() },
-    );
-    vars.insert(
-        "git_stat",
-        if is_repo { git_short_stat(&repo_dir) } else { "n/a".to_string() },
+        "open_threads",
+        if threads.is_empty() {
+            "(none)".to_string()
+        } else {
+            threads
+                .iter()
+                .map(|t| format!("- {t}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
     );
     vars.insert("spec_intent", spec_intent(root, &repo.name));
     vars.insert("schema_version", state.schema_version.clone());
@@ -309,7 +348,14 @@ fn vars_for(
         } else {
             repo.handoffs
                 .iter()
-                .map(|h| format!("### From {} ({})\n{}", h.source, h.captured_at, h.raw.trim()))
+                .map(|h| {
+                    format!(
+                        "### From {} ({})\n{}",
+                        h.source,
+                        h.captured_at,
+                        h.raw.trim()
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n\n")
         },
@@ -318,12 +364,25 @@ fn vars_for(
 }
 
 fn non_empty_or(v: &str, fallback: &str) -> String {
-    if v.is_empty() { fallback.to_string() } else { v.to_string() }
+    if v.is_empty() {
+        fallback.to_string()
+    } else {
+        v.to_string()
+    }
 }
 
 /// 渲染 RESUME.md 並回傳內文（無尾綴換行，與 legacy 一致）。
-fn render_resume(state: &RelayState, root: &Path, repo: &RepoState, kind: Option<&str>) -> Result<String, Error> {
-    let key = if kind.is_some_and(|k| KINDS.contains(&k)) { kind } else { Some("backend") };
+fn render_resume(
+    state: &RelayState,
+    root: &Path,
+    repo: &RepoState,
+    kind: Option<&str>,
+) -> Result<String, Error> {
+    let key = if kind.is_some_and(|k| KINDS.contains(&k)) {
+        kind
+    } else {
+        Some("backend")
+    };
     let template = load_template(key, None);
     let vars = vars_for(state, root, repo);
     let out = fill(&template, &vars);
@@ -383,6 +442,59 @@ fn basename(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// D3：把 repo 參數解析為實際目錄。依序嘗試（1）絕對路徑、（2）relay root 下
+/// 相對路徑（須位於 relay root 內，堵絕 `../` 誤入）、（3）MCP server cwd 相對
+/// 路徑；取第一個存在的目錄候選。全部失敗 → fail-loud 拒寫，錯誤列出所有嘗試
+/// 路徑（`Error::RepoPathUnresolved`）。git-ness 不影響解析驗收（monorepo 子目錄
+/// 合法），只影響渲染診斷（vars_for）。
+fn resolve_repo_path(root: &Path, cwd: &Path, repo: &str) -> Result<PathBuf, Error> {
+    if repo.trim().is_empty() {
+        return Err(Error::RepoPathUnresolved("(empty repo name)".to_string()));
+    }
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let arg = Path::new(repo);
+    // (候選路徑, 是否須位於 relay root 內)
+    let candidates: Vec<(PathBuf, bool)> = if arg.is_absolute() {
+        vec![(arg.to_path_buf(), false)]
+    } else {
+        vec![(root.join(repo), true), (cwd.join(repo), false)]
+    };
+    let mut tried: Vec<String> = Vec::new();
+    for (candidate, must_be_in_root) in &candidates {
+        tried.push(candidate.display().to_string());
+        if !candidate.is_dir() {
+            continue;
+        }
+        let resolved = candidate
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.clone());
+        if *must_be_in_root && !resolved.starts_with(&root_canon) {
+            continue;
+        }
+        return Ok(resolved);
+    }
+    Err(Error::RepoPathUnresolved(tried.join(", ")))
+}
+
+/// 依 `RepoState.path` 取得絕對目錄：新寫入為絕對路徑（D3）；舊格式
+/// root-relative 裸名以 `root.join` 相容；空 path（僅 relayAdd 未 save）→ None。
+fn repo_dir_of(root: &Path, repo: &RepoState) -> Option<PathBuf> {
+    if repo.path.is_empty() {
+        return None;
+    }
+    let p = Path::new(&repo.path);
+    Some(if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    })
+}
+
+/// task 4.4：$HOME 本身被當 relay root 且非 git → 需輸出共用檔警告（不阻擋）。
+fn home_warning_needed(start: &Path, is_git: bool, home: Option<&std::ffi::OsStr>) -> bool {
+    !is_git && home.is_some_and(|h| Path::new(h) == start)
+}
+
 /// relaySave 參數（對應 legacy MCP tool args，snake_case 為內部命名）。
 #[derive(Debug, Default, Clone)]
 pub struct SaveArgs<'a> {
@@ -411,8 +523,8 @@ impl RelayPlugin {
         crate::state::ensure_relay_dir(&root)?;
         let lock = File::create(root.join(".relay/relay.json.lock"))?;
         lock.lock_exclusive()?;
-        let mut state = crate::state::load(&root.join(RELAY_JSON))?
-            .unwrap_or_else(RelayState::fresh);
+        let mut state =
+            crate::state::load(&root.join(RELAY_JSON))?.unwrap_or_else(RelayState::fresh);
         f(&mut state);
         crate::state::persist(&root, &mut state)?;
         self.state = Some(state);
@@ -420,16 +532,36 @@ impl RelayPlugin {
         Ok(())
     }
 
-    /// relayInit：建立 relay root（walk-up 已存在則拒絕）。
-    pub fn relay_init(&mut self, project_context: &str, _kind: Option<&str>) -> Result<String, Error> {
-        let start = self.cwd()?.to_path_buf();
-        if let Some(existing) = crate::root::resolve_root(&start) {
+    /// relayInit：建立 relay root（workspace root 已存在則拒絕；D4）。
+    ///
+    /// project_context 寫入目標 repo 紀錄（D1）：repo 未註冊時先 upsert，
+    /// 永不更新舊全域欄位 `RelayState::project_context`。
+    pub fn relay_init(
+        &mut self,
+        project_context: &str,
+        _kind: Option<&str>,
+    ) -> Result<String, Error> {
+        // D4：init 目標 = workspace root（git toplevel 或非 git cwd）。狀態檔落
+        //     未來 bind 會解析到的同一位置；cwd 是 git 子目錄時不會造出孤兒狀態檔。
+        let cwd = self.cwd()?.to_path_buf();
+        let start = crate::root::workspace_root(&cwd);
+        if let Some(existing) = crate::root::resolve_root(&cwd) {
             return Err(Error::RootExists(existing.display().to_string()));
         }
         std::fs::create_dir_all(start.join("specs"))?;
         std::fs::create_dir_all(start.join(".code-relay"))?;
         let mut state = RelayState::fresh();
-        state.project_context = project_context.to_string();
+        // D1：project_context 落 target repo；全域欄位維持空字串（唯讀 fallback）。
+        //     target = 目前 repo（workspace root basename，等同 relaySave 無 repo 參數的目標）。
+        let repo_name = basename(&start);
+        let repo = state
+            .repos
+            .entry(repo_name.clone())
+            .or_insert_with(|| RepoState::for_repo(&repo_name));
+        repo.name = repo_name.clone();
+        repo.path = start.display().to_string(); // workspace root 本身，絕對路徑
+        repo.project_context = Some(project_context.to_string());
+        repo.last_updated = now_iso();
         crate::state::persist(&start, &mut state)?;
         let gitignore_note = ensure_gitignore(&start);
         self.root = Some(start.clone());
@@ -437,30 +569,59 @@ impl RelayPlugin {
         let mut lines = vec![
             format!("Initialized relay at {}/relay.json", start.display()),
             "- specs/ and .code-relay/ created".to_string(),
+            format!("- registered repo \"{repo_name}\" (project context set)"),
         ];
         if let Some(note) = gitignore_note {
             lines.push(format!("- {note}"));
-            lines.push("- run relaySave to register the current repo".to_string());
-        } else {
-            lines.push("- run relaySave to register the current repo".to_string());
         }
+        // task 4.4：非 git 的 $HOME 本身 → 共用檔警告（不阻擋）
+        if home_warning_needed(
+            &start,
+            git_is_repo(&start),
+            std::env::var_os("HOME").as_deref(),
+        ) {
+            lines.push(
+                "- warning: relay root 是 $HOME 本身（非 git 目錄）；所有於 $HOME 啟動的 session 將共用此 relay.json"
+                    .to_string(),
+            );
+        }
+        lines.push("- run relaySave to register more repos".to_string());
         Ok(lines.join("\n"))
     }
 
-    /// relaySave：寫入/更新目前 repo 狀態並渲染 RESUME.md。
+    /// relaySave：寫入/更新目標 repo 狀態並渲染 RESUME.md。
+    ///
+    /// D2：baton save-then-switch — 每次 save 無條件把 active_baton 切到該 repo。
+    /// D3：寫入前把 repo 解析為實際目錄（絕對路徑 → root 相對 → MCP cwd 相對），
+    ///     全部失敗 → fail-loud 拒寫（不產生髒紀錄）；成功時 `RepoState.path`
+    ///     存絕對路徑，不以裸 repo 名稱作路徑預設值。
     pub fn relay_save(&mut self, args: SaveArgs<'_>) -> Result<String, Error> {
         let root = self.root.clone().ok_or(Error::NoRoot)?;
         let cwd = self.cwd()?.to_path_buf();
-        let repo_name = args
-            .repo
-            .map(str::to_string)
-            .unwrap_or_else(|| basename(&cwd));
+        // D3：解析在寫入前完成——顯式 repo 參數走三層解析；絕對路徑參數的
+        //     repo 名取 basename；無參數 = 目前 workspace root 本身（cwd 必存在）。
+        let (repo_name, repo_dir) = match args.repo {
+            Some(r) => {
+                let resolved = resolve_repo_path(&root, &cwd, r)?;
+                let name = if Path::new(r).is_absolute() {
+                    basename(&resolved)
+                } else {
+                    r.to_string()
+                };
+                (name, resolved)
+            }
+            None => (
+                basename(&cwd),
+                cwd.canonicalize().unwrap_or_else(|_| cwd.clone()),
+            ),
+        };
         self.locked(|state| {
             let repo = state
                 .repos
                 .entry(repo_name.clone())
                 .or_insert_with(|| RepoState::for_repo(&repo_name));
             repo.name = repo_name.clone();
+            repo.path = repo_dir.display().to_string();
             if let Some(v) = args.role {
                 repo.role = v.to_string();
             }
@@ -485,9 +646,8 @@ impl RelayPlugin {
                 repo.confidence_score = (v.round().clamp(1.0, 5.0)) as u8;
             }
             repo.last_updated = now_iso();
-            if state.active_baton.is_empty() {
-                state.active_baton = repo_name.clone();
-            }
+            // D2：save-then-switch（移除 first-save-wins guard）
+            state.active_baton = repo_name.clone();
         })?;
         let state = self.state.as_ref().ok_or(Error::NoRoot)?;
         let repo = state
@@ -496,8 +656,7 @@ impl RelayPlugin {
             .ok_or_else(|| Error::RepoUnknown(repo_name.clone()))?;
         let rendered = render_resume(state, &root, repo, args.kind)?;
         Ok(format!(
-            "Saved state for \"{repo_name}\".\nActive baton: {}\n\n{rendered}",
-            state.active_baton
+            "Saved state for \"{repo_name}\" (active baton switched to \"{repo_name}\").\n\n{rendered}"
         ))
     }
 
@@ -505,9 +664,7 @@ impl RelayPlugin {
     pub fn relay_close(&mut self, repo: Option<&str>, next: Option<&str>) -> Result<String, Error> {
         let root = self.root.clone().ok_or(Error::NoRoot)?;
         let cwd = self.cwd()?.to_path_buf();
-        let repo_name = repo
-            .map(str::to_string)
-            .unwrap_or_else(|| basename(&cwd));
+        let repo_name = repo.map(str::to_string).unwrap_or_else(|| basename(&cwd));
         let (ok, issues) = consistency_check(&root);
         let mut diffs: Vec<(String, String)> = Vec::new();
         self.locked(|state| {
@@ -544,7 +701,10 @@ impl RelayPlugin {
         lines.push(next_md);
         let commit_info = if git_is_repo(&root) {
             let message = format!("relay: close {repo_name} [{}]", now_iso());
-            format!("committed: {}", git_commit(&root, &message, &["relay.json", "specs"]))
+            format!(
+                "committed: {}",
+                git_commit(&root, &message, &["relay.json", "specs"])
+            )
         } else {
             "not a git repo — skipped commit".to_string()
         };
@@ -567,7 +727,16 @@ impl RelayPlugin {
         state: &RelayState,
         repo: &RepoState,
     ) -> Option<String> {
-        let ws_key = self.workspace_key()?;
+        // D6：workspace_key 由目標 repo 解析後的絕對路徑（canonical）derive，
+        //     而非綁定 cwd — 快照歸屬 repo 的真實 workspace。
+        let repo_dir = repo_dir_of(root, repo)?;
+        let ws_key = derive_workspace_key(&repo_dir);
+        // D5：session id 取目標 repo 自身 snapshot；舊格式 fallback 全域（唯讀）。
+        let session_id = if repo.state_snapshot.last_session.is_empty() {
+            state.state_snapshot.last_session.clone()
+        } else {
+            repo.state_snapshot.last_session.clone()
+        };
         let goal = if !repo.next_session_starter.is_empty() {
             repo.next_session_starter.clone()
         } else if !repo.volatile_state.is_empty() {
@@ -578,10 +747,10 @@ impl RelayPlugin {
         let created_at = handoff::unix_now();
         let snapshot = handoff::build_snapshot(
             format!("snap-{created_at}"),
-            state.state_snapshot.last_session.clone(),
-            ws_key,
+            session_id,
+            ws_key.clone(),
             goal,
-            Vec::new(), // pinned_node_ids：P4 graph capture 接入後由 caller 注入
+            Vec::new(),    // pinned_node_ids：P4 graph capture 接入後由 caller 注入
             String::new(), // focused_subgraph_toon：P4 graph capture 接入後由 caller 注入
             MemoryQueryCriteria {
                 target_symbols: Vec::new(),
@@ -594,8 +763,12 @@ impl RelayPlugin {
             .registry_path
             .clone()
             .unwrap_or_else(graphify_registry::registry_db_path);
-        match handoff::sync_to_registry_at(&db_path, ws_key, &root.display().to_string(), &snapshot)
-        {
+        match handoff::sync_to_registry_at(
+            &db_path,
+            &ws_key,
+            &repo_dir.display().to_string(),
+            &snapshot,
+        ) {
             Ok(()) => None,
             Err(e) => Some(format!("Snapshot: skipped — {e}")),
         }
@@ -625,7 +798,11 @@ impl RelayPlugin {
     }
 
     /// relayResume：渲染指定（或 baton）repo 的 RESUME。
-    pub fn relay_resume(&mut self, repo: Option<&str>, kind: Option<&str>) -> Result<String, Error> {
+    pub fn relay_resume(
+        &mut self,
+        repo: Option<&str>,
+        kind: Option<&str>,
+    ) -> Result<String, Error> {
         let root = self.root.clone().ok_or(Error::NoRoot)?;
         let state = self.state.as_ref().ok_or(Error::NoRoot)?;
         let target = repo
@@ -647,9 +824,15 @@ impl RelayPlugin {
         let state = self.state.as_ref().ok_or(Error::NoRoot)?;
         let mut lines = vec![
             format!("Relay root: {}", root.display()),
+            // D1：優先顯示 baton repo 自身 context，無 → 舊全域 fallback → (unset)。
             format!(
                 "Project: {}",
-                non_empty_or(&state.project_context, "(unset)")
+                state
+                    .repos
+                    .get(&state.active_baton)
+                    .and_then(|r| r.project_context.clone())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| non_empty_or(&state.project_context, "(unset)"))
             ),
             format!(
                 "Active baton: {}",
@@ -670,7 +853,10 @@ impl RelayPlugin {
             if !repo.next_session_starter.is_empty() {
                 line.push_str(&format!(
                     " → {}",
-                    repo.next_session_starter.chars().take(60).collect::<String>()
+                    repo.next_session_starter
+                        .chars()
+                        .take(60)
+                        .collect::<String>()
                 ));
             }
             lines.push(line);
@@ -678,7 +864,11 @@ impl RelayPlugin {
         let specs = list_specs(&root);
         lines.push(format!(
             "Specs: {}",
-            if specs.is_empty() { "(none)".to_string() } else { specs.join(", ") }
+            if specs.is_empty() {
+                "(none)".to_string()
+            } else {
+                specs.join(", ")
+            }
         ));
         lines.push(format!(
             "Drift: {}",
@@ -695,9 +885,7 @@ impl RelayPlugin {
     /// relayAdd：把 TODO/handoff 文件收進 relay 狀態與 open_threads。
     pub fn relay_add(&mut self, file: &Path, repo: Option<&str>) -> Result<String, Error> {
         let cwd = self.cwd()?.to_path_buf();
-        let repo_name = repo
-            .map(str::to_string)
-            .unwrap_or_else(|| basename(&cwd));
+        let repo_name = repo.map(str::to_string).unwrap_or_else(|| basename(&cwd));
         let resolved = cwd.join(file);
         if !resolved.is_file() {
             return Err(Error::FileNotFound(file.display().to_string()));
@@ -717,19 +905,16 @@ impl RelayPlugin {
                 raw: raw.clone(),
             });
             repo_state.last_updated = now_iso();
+            // D5：threads 寫入目標 repo 自身 snapshot，不碰全域 state_snapshot。
             for line in raw.lines().map(str::trim).filter(|l| !l.is_empty()) {
                 let t = line.to_string();
-                if !state.state_snapshot.open_threads.contains(&t) {
-                    state.state_snapshot.open_threads.push(t);
+                if !repo_state.state_snapshot.open_threads.contains(&t) {
+                    repo_state.state_snapshot.open_threads.push(t);
                 }
             }
-            total_threads = state.state_snapshot.open_threads.len();
+            total_threads = repo_state.state_snapshot.open_threads.len();
         })?;
-        let line_count = raw
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .count();
+        let line_count = raw.lines().map(str::trim).filter(|l| !l.is_empty()).count();
         Ok(format!(
             "Added handoff \"{source}\" to \"{repo_name}\".\nParsed {line_count} line(s) into open_threads.\nTotal open threads: {total_threads}"
         ))
@@ -739,6 +924,7 @@ impl RelayPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::process::Command;
     use tempfile::tempdir;
 
@@ -760,26 +946,236 @@ mod tests {
         assert!(status.success(), "git {args:?} failed");
     }
 
+    /// D1 fallback 鏈三案例（task 5.1）：repo 有值 → 自身優先；repo 無值 → 舊全域；
+    /// 皆無 → "(unset)"。
     #[test]
+    #[serial]
+    fn vars_for_project_context_fallback_chain() {
+        let root = Path::new("/tmp/relay-fallback");
+        let mut state = RelayState::fresh();
+        let mut repo = RepoState::for_repo("x");
+        let vars = vars_for(&state, root, &repo);
+        assert_eq!(vars["project_context"], "(unset)");
+        state.project_context = "Legacy".into();
+        let vars = vars_for(&state, root, &repo);
+        assert_eq!(vars["project_context"], "Legacy");
+        repo.project_context = Some("Mine".into());
+        let vars = vars_for(&state, root, &repo);
+        assert_eq!(vars["project_context"], "Mine");
+    }
+
+    /// D3 拒絕情境（task 5.2）：無法解析 → fail-loud、列出嘗試路徑、狀態檔不變。
+    #[test]
+    #[serial]
+    fn save_rejects_unresolvable_repo_and_lists_tried_paths() {
+        let dir = tempdir().unwrap();
+        let mut p = bind(dir.path());
+        p.relay_init("p", None).unwrap();
+        let before = std::fs::read(dir.path().join("relay.json")).unwrap();
+        let err = p
+            .relay_save(SaveArgs {
+                repo: Some("Foo"),
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.starts_with("repo path could not be resolved"), "{err}");
+        assert!(err.contains("Tried:"), "{err}");
+        assert!(
+            err.contains(&dir.path().join("Foo").display().to_string()),
+            "須列出 root 相對候選: {err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("relay.json")).unwrap(),
+            before,
+            "拒寫後狀態檔位元組不變"
+        );
+    }
+
+    /// D3 層 1（task 5.2）：root 外的絕對路徑明確表態 → 允許；path 存絕對路徑。
+    #[test]
+    #[serial]
+    fn save_accepts_absolute_path_outside_root() {
+        let dir = tempdir().unwrap();
+        let elsewhere = tempdir().unwrap();
+        let mut p = bind(dir.path());
+        p.relay_init("p", None).unwrap();
+        let repo_dir = elsewhere.path().join("lib-b");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        p.relay_save(SaveArgs {
+            repo: Some(repo_dir.to_str().unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        let state = p.state().unwrap();
+        let repo = &state.repos["lib-b"];
+        assert_eq!(repo.name, "lib-b");
+        assert_eq!(
+            repo.path,
+            repo_dir.canonicalize().unwrap().display().to_string()
+        );
+    }
+
+    /// spec「各 repo context 不互相污染」：resume B 只顯示 Beta，不含 Alpha。
+    #[test]
+    #[serial]
+    fn per_repo_context_does_not_leak_between_repos() {
+        let dir = tempdir().unwrap();
+        let relay = serde_json::json!({
+            "schema_version": "1.0.0",
+            "project_context": "",
+            "active_baton": "b",
+            "repos": {
+                "a": { "name": "a", "path": "a", "project_context": "Alpha" },
+                "b": { "name": "b", "path": "b", "project_context": "Beta" }
+            }
+        });
+        std::fs::write(
+            dir.path().join("relay.json"),
+            serde_json::to_string(&relay).unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::create_dir_all(dir.path().join("b")).unwrap();
+        let mut p = bind(dir.path());
+        let out = p.relay_resume(Some("b"), None).unwrap();
+        assert!(out.contains("Beta"), "{out}");
+        assert!(!out.contains("Alpha"), "{out}");
+    }
+
+    /// task 5.4 / spec「舊格式唯讀 fallback」：受害檔模型（全域 context +
+    /// bare-name path、repo 無自有值）→ 渲染 fallback；save 不回寫全域欄位。
+    #[test]
+    #[serial]
+    fn legacy_global_context_used_as_readonly_fallback() {
+        let dir = tempdir().unwrap();
+        let relay = serde_json::json!({
+            "schema_version": "1.0.0",
+            "project_context": "Legacy",
+            "active_baton": "api",
+            "repos": { "api": { "name": "api", "path": "api" } }
+        });
+        std::fs::write(
+            dir.path().join("relay.json"),
+            serde_json::to_string(&relay).unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap();
+        let mut p = bind(dir.path());
+        let out = p.relay_resume(Some("api"), None).unwrap();
+        assert!(out.contains("Legacy"), "{out}");
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
+        let state = p.state().unwrap();
+        assert_eq!(state.project_context, "Legacy", "全域欄位不被回寫");
+        assert_eq!(
+            state.repos["api"].project_context.as_deref(),
+            None,
+            "save 不寫 context"
+        );
+    }
+
+    /// task 5.6 / spec「舊格式 snapshot 唯讀 fallback」：全域 threads 進渲染、
+    /// save 不回寫全域 snapshot。
+    #[test]
+    #[serial]
+    fn legacy_global_snapshot_used_as_readonly_fallback() {
+        let dir = tempdir().unwrap();
+        let relay = serde_json::json!({
+            "schema_version": "1.0.0",
+            "project_context": "",
+            "active_baton": "api",
+            "state_snapshot": { "open_threads": ["legacy-thread"], "last_session": "" },
+            "repos": { "api": { "name": "api" } }
+        });
+        std::fs::write(
+            dir.path().join("relay.json"),
+            serde_json::to_string(&relay).unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap();
+        let mut p = bind(dir.path());
+        let out = p.relay_resume(Some("api"), None).unwrap();
+        assert!(out.contains("- legacy-thread"), "{out}");
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
+        let state = p.state().unwrap();
+        assert_eq!(
+            state.state_snapshot.open_threads,
+            vec!["legacy-thread".to_string()],
+            "全域 snapshot 不被 save 觸碰"
+        );
+        assert!(state.repos["api"].state_snapshot.open_threads.is_empty());
+    }
+
+    /// spec「在 workspace A 關閉 repo B」（D6）：跨 workspace repo 的 close 快照
+    /// 以 repo 真實 workspace 的 workspace_key 歸檔，不掛 root key。
+    #[test]
+    #[serial]
+    fn close_snapshot_of_foreign_repo_uses_repo_workspace_key() {
+        let dir = tempdir().unwrap();
+        let ws_b = tempdir().unwrap();
+        let mut p = bind(dir.path());
+        p.relay_init("p", None).unwrap();
+        let repo_b = ws_b.path().join("b");
+        std::fs::create_dir_all(&repo_b).unwrap();
+        p.relay_save(SaveArgs {
+            repo: Some(repo_b.to_str().unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        let out = p.relay_close(Some("b"), Some("next step")).unwrap();
+        assert!(!out.contains("Snapshot: skipped"), "{out}");
+        let db = graphify_registry::RegistryDb::open(&dir.path().join("graphify.db")).unwrap();
+        let rows = db.list_snapshots(&derive_workspace_key(&repo_b)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].payload.task_goal, "next step");
+        assert!(
+            db.list_snapshots(p.workspace_key().unwrap())
+                .unwrap()
+                .is_empty(),
+            "綁定 root 的 key 不得吸收跨 workspace repo 的快照"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn load_template_known_and_fallback() {
         assert!(load_template(Some("backend"), None).starts_with("# Resume"));
         assert!(load_template(Some("frontend"), None).contains("{{repo_name}}"));
         assert!(load_template(Some("infra"), None).contains("{{repo_name}}"));
         // 未知 kind → backend 模板（legacy 語意）
-        assert_eq!(load_template(Some("nope"), None), load_template(Some("backend"), None));
-        assert_eq!(load_template(None, None), load_template(Some("backend"), None));
+        assert_eq!(
+            load_template(Some("nope"), None),
+            load_template(Some("backend"), None)
+        );
+        assert_eq!(
+            load_template(None, None),
+            load_template(Some("backend"), None)
+        );
     }
 
     #[test]
+    #[serial]
     fn fill_substitutes_known_vars() {
         let mut vars = BTreeMap::new();
         vars.insert("repo_name", "api".to_string());
         vars.insert("volatile_state", "在寫測試".to_string());
-        let out = fill("R: {{repo_name}} V: {{volatile_state}} U: {{unknown}}", &vars);
+        let out = fill(
+            "R: {{repo_name}} V: {{volatile_state}} U: {{unknown}}",
+            &vars,
+        );
         assert_eq!(out, "R: api V: 在寫測試 U: ");
     }
 
     #[test]
+    #[serial]
     fn extract_intent_prefers_heading_and_truncates() {
         let doc = "# Full Title Line That Is Very Long And Should Be Truncated Past 120 Characters Because Legacy Cuts The Spec Intent String At 120 With An Ellipsis Suffix Marker\nbody";
         let intent = extract_intent(doc);
@@ -791,6 +1187,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn sha1_12_matches_known_vector() {
         // sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
         assert_eq!(sha1_12("hello"), "aaf4c61ddcc5");
@@ -798,27 +1195,47 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn consistency_check_flags_all_rules() {
         let dir = tempdir().unwrap();
         let specs = dir.path().join("specs");
         std::fs::create_dir_all(&specs).unwrap();
         std::fs::write(specs.join("no-title.md"), "no heading here\n").unwrap();
-        std::fs::write(specs.join("conflict.md"), "# T\nsee conflict: between a and b\n").unwrap();
+        std::fs::write(
+            specs.join("conflict.md"),
+            "# T\nsee conflict: between a and b\n",
+        )
+        .unwrap();
         std::fs::write(specs.join("broken.md"), "# T\nbroken: something\n").unwrap();
-        std::fs::write(specs.join("removed.md"), "# T\n## REMOVED Requirements\nold requirement\n").unwrap();
-        std::fs::write(specs.join("removed-clean.md"), "# T\n## REMOVED Requirements\n").unwrap();
+        std::fs::write(
+            specs.join("removed.md"),
+            "# T\n## REMOVED Requirements\nold requirement\n",
+        )
+        .unwrap();
+        std::fs::write(
+            specs.join("removed-clean.md"),
+            "# T\n## REMOVED Requirements\n",
+        )
+        .unwrap();
         std::fs::write(specs.join("clean.md"), "# Good\nfine\n").unwrap();
 
         let (ok, issues) = consistency_check(dir.path());
         assert!(!ok);
         assert_eq!(issues.len(), 4, "{issues:?}");
-        assert!(issues.iter().any(|i| i == "no-title: missing top-level title"));
-        assert!(issues.iter().any(|i| i == "conflict: contains CONFLICT marker"));
+        assert!(issues
+            .iter()
+            .any(|i| i == "no-title: missing top-level title"));
+        assert!(issues
+            .iter()
+            .any(|i| i == "conflict: contains CONFLICT marker"));
         assert!(issues.iter().any(|i| i == "broken: contains BROKEN marker"));
-        assert!(issues.iter().any(|i| i == "removed: has REMOVED requirements (reconcile drift)"));
+        assert!(issues
+            .iter()
+            .any(|i| i == "removed: has REMOVED requirements (reconcile drift)"));
     }
 
     #[test]
+    #[serial]
     fn diff_specs_tracks_added_and_modified() {
         let dir = tempdir().unwrap();
         let specs = dir.path().join("specs");
@@ -841,6 +1258,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn init_refuses_existing_root_and_files_created() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
@@ -859,10 +1277,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn save_clamps_confidence_and_splits_debt_tag() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
         p.relay_init("p", None).unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap(); // D3：候選須存在
         p.relay_save(SaveArgs {
             repo: Some("api"),
             confidence: Some(4.6),
@@ -884,10 +1304,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn full_flow_lifecycle() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
         p.relay_init("demo", None).unwrap();
+        // D3：候選目錄須存在
+        std::fs::create_dir_all(dir.path().join("api")).unwrap();
+        std::fs::create_dir_all(dir.path().join("web")).unwrap();
 
         // save
         let out = p
@@ -898,35 +1322,44 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert!(out.starts_with("Saved state for \"api\"."), "{out}");
-        assert!(out.contains("Active baton: api"));
+        assert!(
+            out.starts_with("Saved state for \"api\" (active baton switched to \"api\")."),
+            "{out}"
+        );
         // 第二個 repo
-        p.relay_save(SaveArgs { repo: Some("web"), ..Default::default() })
-            .unwrap();
+        p.relay_save(SaveArgs {
+            repo: Some("web"),
+            ..Default::default()
+        })
+        .unwrap();
 
-        // status
+        // status（D1：init 已註冊 workspace root 本身 → root+api+web 共 3 repos；
+        //        D2：save web 後 baton 無條件切到 web）
         let out = p.relay_status().unwrap();
         assert!(out.contains("Relay root:"));
-        assert!(out.contains("Active baton: api"));
-        assert!(out.contains("Repos (2):"));
+        assert!(out.contains("Active baton: web"));
+        assert!(out.contains("Repos (3):"));
         assert!(out.contains("conf=5"));
         assert!(out.contains("Specs: (none)"));
 
-        // resume → baton api
+        // resume → baton web（D2：最近 save 的 repo）
         let out = p.relay_resume(None, None).unwrap();
-        assert!(out.contains("Resume — api"), "{out}");
+        assert!(out.contains("Resume — web"), "{out}");
 
         // switch 未註冊 repo → frozen 文字
         let err = p.relay_switch("nope", None).unwrap_err().to_string();
-        assert_eq!(err, "repo \"nope\" not registered. Run relaySave in that repo first.");
-        // switch 成功
-        let out = p.relay_switch("web", None).unwrap();
-        assert!(out.starts_with("Baton passed to \"web\"."));
-        assert_eq!(p.state().unwrap().active_baton, "web");
+        assert_eq!(
+            err,
+            "repo \"nope\" not registered. Run relaySave in that repo first."
+        );
+        // switch 成功 → 反向切回 api
+        let out = p.relay_switch("api", None).unwrap();
+        assert!(out.starts_with("Baton passed to \"api\"."));
+        assert_eq!(p.state().unwrap().active_baton, "api");
 
-        // resume 未指定 → baton（web）
+        // resume 未指定 → baton（api）
         let out = p.relay_resume(None, None).unwrap();
-        assert!(out.contains("Resume — web"), "{out}");
+        assert!(out.contains("Resume — api"), "{out}");
 
         // add TODO 文件（3 行非空：# tasks / - fix x / - fix y）
         let todo = dir.path().join("todo.md");
@@ -939,11 +1372,21 @@ mod tests {
         // 重複 add → 去重
         let out = p.relay_add(&todo, Some("api")).unwrap();
         assert!(out.contains("Parsed 3 line(s)"), "{out}");
-        assert_eq!(p.state().unwrap().state_snapshot.open_threads.len(), 3);
+        // D5：threads 落 repo 自身 snapshot，不寫全域
+        assert!(p.state().unwrap().state_snapshot.open_threads.is_empty());
+        assert_eq!(
+            p.state().unwrap().repos["api"]
+                .state_snapshot
+                .open_threads
+                .len(),
+            3
+        );
         assert_eq!(p.state().unwrap().repos["api"].handoffs.len(), 2);
 
         // close
-        let out = p.relay_close(Some("api"), Some("下一個 session 從 Slice C 開始")).unwrap();
+        let out = p
+            .relay_close(Some("api"), Some("下一個 session 從 Slice C 開始"))
+            .unwrap();
         assert!(out.contains("Closing ritual for \"api\"."));
         assert!(out.contains("Consistency: OK"));
         assert!(out.contains("Spec sync: no changes"));
@@ -957,37 +1400,55 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn add_reports_file_not_found() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
         p.relay_init("p", None).unwrap();
-        let err = p.relay_add(Path::new("missing.md"), None).unwrap_err().to_string();
+        let err = p
+            .relay_add(Path::new("missing.md"), None)
+            .unwrap_err()
+            .to_string();
         assert_eq!(err, "File not found: missing.md");
     }
 
     #[test]
+    #[serial]
     fn resume_unknown_repo_text() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
         p.relay_init("p", None).unwrap();
-        p.relay_save(SaveArgs { repo: Some("api"), ..Default::default() })
-            .unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap(); // D3
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
         let err = p.relay_resume(Some("ghost"), None).unwrap_err().to_string();
         assert_eq!(err, "repo \"ghost\" not registered.");
         let err = p.relay_resume(Some(""), None).unwrap_err().to_string();
-        assert_eq!(err, "No active baton set and no repo given. Run relaySwitch <repo> first.");
+        assert_eq!(
+            err,
+            "No active baton set and no repo given. Run relaySwitch <repo> first."
+        );
     }
 
     #[test]
+    #[serial]
     fn no_root_frozen_error_for_all_tools() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path()); // 無 relay.json
-        assert_eq!(p.relay_status().unwrap_err().to_string(), "No relay.json found. Run relayInit first.");
-        assert_eq!(p.relay_save(SaveArgs::default()).unwrap_err().to_string(), "No relay.json found. Run relayInit first.");
-        assert_eq!(p.relay_close(None, None).unwrap_err().to_string(), "No relay.json found. Run relayInit first.");
+        let frozen = "No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.";
+        assert_eq!(p.relay_status().unwrap_err().to_string(), frozen);
+        assert_eq!(
+            p.relay_save(SaveArgs::default()).unwrap_err().to_string(),
+            frozen
+        );
+        assert_eq!(p.relay_close(None, None).unwrap_err().to_string(), frozen);
     }
 
     #[test]
+    #[serial]
     fn close_commits_in_git_repo_and_seeds_gitignore() {
         let dir = tempdir().unwrap();
         git(dir.path(), &["init", "-q"]);
@@ -997,11 +1458,18 @@ mod tests {
 
         let mut p = bind(dir.path());
         let out = p.relay_init("p", None).unwrap();
-        assert!(out.contains(".gitignore updated (relay.json, RESUME.md, next_step.md)"), "{out}");
+        assert!(
+            out.contains(".gitignore updated (relay.json, RESUME.md, next_step.md)"),
+            "{out}"
+        );
         assert!(dir.path().join(".gitignore").is_file());
 
-        p.relay_save(SaveArgs { repo: Some("api"), ..Default::default() })
-            .unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap(); // D3
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
         // close 實際 commit 的是 specs/（relay.json 被 .gitignore 排除）
         std::fs::create_dir_all(dir.path().join("specs")).unwrap();
         std::fs::write(dir.path().join("specs/api.md"), "# API\nspec body\n").unwrap();
@@ -1018,24 +1486,42 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn close_persists_snapshot_to_registry() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
         p.relay_init("p", None).unwrap();
-        p.relay_save(SaveArgs { repo: Some("api"), ..Default::default() })
+        std::fs::create_dir_all(dir.path().join("api")).unwrap(); // D3
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
+        let out = p
+            .relay_close(Some("api"), Some("接 P4 collection 寫入"))
             .unwrap();
-        let out = p.relay_close(Some("api"), Some("接 P4 collection 寫入")).unwrap();
         assert!(out.contains("Closing ritual for \"api\"."));
-        assert!(!out.contains("Snapshot: skipped"), "成功時不該有 note:\n{out}");
-        // registry 內有 1 筆，task_goal = close 的 next
-        let ws = p.workspace_key().unwrap();
+        assert!(
+            !out.contains("Snapshot: skipped"),
+            "成功時不該有 note:\n{out}"
+        );
+        // D6：registry 快照以 repo 實際路徑 derive 的 workspace_key 歸檔，
+        //     不再掛綁定 cwd 的 key。
+        let api_dir = dir.path().join("api").canonicalize().unwrap();
         let db = graphify_registry::RegistryDb::open(&dir.path().join("graphify.db")).unwrap();
-        let rows = db.list_snapshots(ws).unwrap();
+        let rows = db.list_snapshots(&derive_workspace_key(&api_dir)).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].payload.task_goal, "接 P4 collection 寫入");
+        assert!(
+            db.list_snapshots(p.workspace_key().unwrap())
+                .unwrap()
+                .is_empty(),
+            "綁定 root 的 key 不得再有快照（D6 歸屬修正）"
+        );
     }
 
     #[test]
+    #[serial]
     fn close_with_broken_registry_appends_note_only() {
         let dir = tempdir().unwrap();
         // 父路徑是「檔案」→ create_dir_all 得 ENOTDIR → RegistryDb::open 失敗
@@ -1045,8 +1531,12 @@ mod tests {
         let mut p = RelayPlugin::new().with_registry_path(broken);
         p.bind_for_cli(dir.path());
         p.relay_init("p", None).unwrap();
-        p.relay_save(SaveArgs { repo: Some("api"), ..Default::default() })
-            .unwrap();
+        std::fs::create_dir_all(dir.path().join("api")).unwrap(); // D3
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })
+        .unwrap();
         let out = p.relay_close(Some("api"), None).unwrap();
         assert!(out.contains("Closing ritual for \"api\"."));
         assert!(out.contains("Snapshot: skipped"), "{out}");

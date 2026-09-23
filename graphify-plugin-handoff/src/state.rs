@@ -67,7 +67,8 @@ impl Default for RelayState {
 #[serde(rename_all = "snake_case")]
 pub struct RepoState {
     pub name: String,
-    /// root-relative 子目錄，預設為 repo 名。
+    /// repo 實際目錄。新寫入一律為絕對路徑（D3）；舊檔案的 root-relative
+    /// 裸名路徑由渲染層 `root.join(path)` 相容。
     #[serde(default)]
     pub path: String,
     #[serde(default)]
@@ -76,6 +77,10 @@ pub struct RepoState {
     pub active_phase: String,
     #[serde(default)]
     pub volatile_state: String,
+    #[serde(default)]
+    pub project_context: Option<String>,
+    #[serde(default)]
+    pub state_snapshot: StateSnapshot,
     #[serde(default = "default_confidence")]
     pub confidence_score: u8,
     #[serde(default)]
@@ -93,11 +98,10 @@ fn default_confidence() -> u8 {
 }
 
 impl RepoState {
-    /// 以 repo 名建立預設狀態（path 預設為 repo 名）。
+    /// 以 repo 名建立預設狀態（path 留空，D3 由 relay_save 解析後寫入絕對路徑）。
     pub fn for_repo(name: impl Into<String>) -> Self {
-        let name = name.into();
         Self {
-            path: name.clone(),
+            name: name.into(),
             ..Self::default()
         }
     }
@@ -111,6 +115,8 @@ impl Default for RepoState {
             role: String::new(),
             active_phase: String::new(),
             volatile_state: String::new(),
+            project_context: None,
+            state_snapshot: StateSnapshot::default(),
             confidence_score: default_confidence(),
             debt_tag: Vec::new(),
             next_session_starter: String::new(),
@@ -156,7 +162,9 @@ pub struct SpecSync {
 
 /// 目前 UTC 時間（ISO-8601，毫秒，對應 JS `Date.prototype.toISOString()`）。
 pub fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
 }
 
 /// 讀取 relay.json；檔案不存在回傳 `Ok(None)`。
@@ -174,7 +182,10 @@ pub fn load(path: &Path) -> Result<Option<RelayState>, Error> {
 /// 尾綴 `\n` 與 legacy `writeRelay`（`JSON.stringify(state, null, 2) + "\n"`）位元相容。
 pub fn save_atomic(path: &Path, state: &RelayState) -> Result<(), Error> {
     let dir = path.parent().ok_or_else(|| {
-        Error::Io(io::Error::new(io::ErrorKind::InvalidInput, "relay.json 無父目錄"))
+        Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "relay.json 無父目錄",
+        ))
     })?;
     let json = serde_json::to_string_pretty(state)?;
     let tmp_path = dir.join(format!(".relay.json.tmp-{}", std::process::id()));
@@ -257,10 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn repo_defaults_confidence_3_and_path_to_name() {
+    fn repo_defaults_confidence_3_and_path_empty() {
         let r = RepoState::for_repo("foo");
         assert_eq!(r.confidence_score, 3);
-        assert_eq!(r.path, "foo");
+        assert!(
+            r.path.is_empty(),
+            "D3: path 由 relay_save 解析後寫入，不留裸名預設"
+        );
+        assert!(r.project_context.is_none());
         assert!(r.debt_tag.is_empty());
     }
 

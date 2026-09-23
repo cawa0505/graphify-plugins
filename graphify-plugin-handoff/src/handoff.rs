@@ -172,13 +172,15 @@ mod tests {
     fn envelope_roundtrip_json() {
         let s = snapshot_at(now(), "snap-1");
         let env = envelope_for(&s);
-        assert_eq!(env.format_version, PluginMemoryEnvelope::<()>::FORMAT_VERSION);
+        assert_eq!(
+            env.format_version,
+            PluginMemoryEnvelope::<()>::FORMAT_VERSION
+        );
         assert_eq!(env.plugin_id, PLUGIN_ID);
         assert_eq!(env.record_id, "snap-1");
         assert_eq!(env.record_kind, RECORD_KIND_SNAPSHOT);
         let encoded = serde_json::to_string(&env).unwrap();
-        let decoded: PluginMemoryEnvelope<HandoffPayload> =
-            serde_json::from_str(&encoded).unwrap();
+        let decoded: PluginMemoryEnvelope<HandoffPayload> = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, env);
     }
 
@@ -186,7 +188,9 @@ mod tests {
     fn no_qdrant_point_ids_in_snapshot_or_envelope() {
         let s = snapshot_at(now(), "snap-1");
         let snap_json = serde_json::to_string(&s).unwrap().to_lowercase();
-        let env_json = serde_json::to_string(&envelope_for(&s)).unwrap().to_lowercase();
+        let env_json = serde_json::to_string(&envelope_for(&s))
+            .unwrap()
+            .to_lowercase();
         assert!(!snap_json.contains("point_id"), "{snap_json}");
         assert!(!snap_json.contains("\"vector\""), "{snap_json}");
         assert!(!env_json.contains("point_id"), "{env_json}");

@@ -58,7 +58,10 @@ fn main() -> ExitCode {
             };
             plugin.relay_switch(repo, args.get(2).map(String::as_str))
         }
-        "resume" => plugin.relay_resume(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
+        "resume" => plugin.relay_resume(
+            args.get(1).map(String::as_str),
+            args.get(2).map(String::as_str),
+        ),
         "status" => plugin.relay_status(),
         "add" => {
             let Some(file) = args.get(1) else {

@@ -27,5 +27,8 @@
 ## Inherited handoffs
 {{handoffs}}
 
+## Open threads
+{{open_threads}}
+
 ---
 _Generated {{last_updated}} · relay v{{schema_version}}_

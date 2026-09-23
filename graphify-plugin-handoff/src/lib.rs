@@ -12,8 +12,8 @@
 
 pub mod handoff;
 pub mod relay;
-pub mod skill_install;
 pub mod root;
+pub mod skill_install;
 pub mod state;
 pub mod sync;
 
@@ -29,7 +29,7 @@ pub const PLUGIN_ID: &str = "graphify-plugin-handoff";
 /// 統一錯誤型別。文字為 PROTOCOL.md 凍結語意，消費端可能逐字比對。
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("No relay.json found. Run relayInit first.")]
+    #[error("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.")]
     NoRoot,
     #[error("relay.json already exists at {0}. Edit it or run relaySave.")]
     RootExists(String),
@@ -39,6 +39,8 @@ pub enum Error {
     NoActiveBaton,
     #[error("repo \"{0}\" not registered.")]
     RepoUnknown(String),
+    #[error("repo path could not be resolved. Tried: {0}. Create the repo directory under the relay root or pass an absolute path.")]
+    RepoPathUnresolved(String),
     #[error("File not found: {0}")]
     FileNotFound(String),
     #[error("io: {0}")]
@@ -120,7 +122,7 @@ impl RelayPlugin {
     fn produce_packet(&self) -> Vec<u8> {
         let key = self.get_workspace_key().to_string();
         let Some(state) = self.state.as_ref() else {
-            return sync::emit_error_packet("No relay.json found. Run relayInit first.").into_bytes();
+            return sync::emit_error_packet("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.").into_bytes();
         };
         let data = serde_json::json!({
             "handoff": state,
@@ -199,7 +201,11 @@ impl GraphifyPlugin for RelayPlugin {
     }
 
     fn on_graph_updated(&mut self, event: &GraphUpdateEvent) {
-        if self.ctx.as_ref().is_none_or(|c| c.workspace_key != event.workspace_key) {
+        if self
+            .ctx
+            .as_ref()
+            .is_none_or(|c| c.workspace_key != event.workspace_key)
+        {
             return;
         }
         for node in &event.modified_nodes {
@@ -214,6 +220,7 @@ impl GraphifyPlugin for RelayPlugin {
 mod tests {
     use super::*;
     use graphify_core::plugin::{GraphUpdateKind, WorkspaceContext};
+    use serial_test::serial;
     use tempfile::tempdir;
 
     fn ctx(root: &std::path::Path) -> WorkspaceContext {
@@ -225,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn plugin_id_and_unbound_key() {
         let p = RelayPlugin::new();
         assert_eq!(p.get_id(), PLUGIN_ID);
@@ -234,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn bind_roundtrips_workspace_key() {
         let dir = tempdir().unwrap();
         let mut p = RelayPlugin::new();
@@ -245,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn bind_without_root_produces_error_packet() {
         let dir = tempdir().unwrap();
         let mut p = RelayPlugin::new();
@@ -254,11 +264,12 @@ mod tests {
         let meta = sync::parse_meta(&String::from_utf8_lossy(&out));
         assert_eq!(
             meta.error.as_deref(),
-            Some("No relay.json found. Run relayInit first.")
+            Some("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.")
         );
     }
 
     #[test]
+    #[serial]
     fn bind_loads_existing_state() {
         let dir = tempdir().unwrap();
         let mut state = RelayState::fresh();
@@ -271,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn proactive_sync_emits_compliant_packet() {
         let dir = tempdir().unwrap();
         let state = RelayState::fresh();
@@ -290,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn passive_sync_restores_snapshot_and_acks() {
         let dir = tempdir().unwrap();
         let mut local = RelayState::fresh();
@@ -313,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn passive_sync_rejects_foreign_workspace_key() {
         let dir = tempdir().unwrap();
         let state = RelayState::fresh();
@@ -331,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn passive_sync_rejects_major_mismatch() {
         let dir = tempdir().unwrap();
         let state = RelayState::fresh();
@@ -338,7 +353,8 @@ mod tests {
         let mut p = RelayPlugin::new();
         p.bind(ctx(dir.path()));
 
-        let packet = "metadata:\n  format_version: \"2.0.0\"\n  workspace_key: \"w\"\n  plugin_data: {}\n";
+        let packet =
+            "metadata:\n  format_version: \"2.0.0\"\n  workspace_key: \"w\"\n  plugin_data: {}\n";
         let out = p.sync_toon(Some(packet.as_bytes().to_vec()));
         let meta = sync::parse_meta(&String::from_utf8_lossy(&out));
         assert!(meta
@@ -348,6 +364,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn on_graph_updated_tracks_only_matching_workspace() {
         let dir = tempdir().unwrap();
         let mut p = RelayPlugin::new();
@@ -356,14 +373,21 @@ mod tests {
 
         let event = GraphUpdateEvent::new(
             wk.clone(),
-            vec![graphify_core::NodeId("a".into()), graphify_core::NodeId("b".into())],
+            vec![
+                graphify_core::NodeId("a".into()),
+                graphify_core::NodeId("b".into()),
+            ],
             GraphUpdateKind::Indexed,
         );
         p.on_graph_updated(&event);
         assert_eq!(p.active_nodes(), &["a".to_string(), "b".to_string()]);
 
         // 重複節點去重
-        let dup = GraphUpdateEvent::new(wk, vec![graphify_core::NodeId("a".into())], GraphUpdateKind::Manual);
+        let dup = GraphUpdateEvent::new(
+            wk,
+            vec![graphify_core::NodeId("a".into())],
+            GraphUpdateKind::Manual,
+        );
         p.on_graph_updated(&dup);
         assert_eq!(p.active_nodes().len(), 2);
 

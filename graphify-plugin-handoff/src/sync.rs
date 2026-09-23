@@ -91,9 +91,18 @@ fn unescape_string(s: &str) -> String {
 pub fn emit_packet(workspace_key: &str, plugin_data: &serde_json::Value) -> String {
     let mut out = String::new();
     out.push_str("metadata:\n");
-    out.push_str(&format!("  format_version: {}\n", escape_string(FORMAT_VERSION)));
-    out.push_str(&format!("  workspace_key: {}\n", escape_string(workspace_key)));
-    out.push_str(&format!("  plugin_data: {}\n", escape_string(&plugin_data.to_string())));
+    out.push_str(&format!(
+        "  format_version: {}\n",
+        escape_string(FORMAT_VERSION)
+    ));
+    out.push_str(&format!(
+        "  workspace_key: {}\n",
+        escape_string(workspace_key)
+    ));
+    out.push_str(&format!(
+        "  plugin_data: {}\n",
+        escape_string(&plugin_data.to_string())
+    ));
     out
 }
 
@@ -101,7 +110,10 @@ pub fn emit_packet(workspace_key: &str, plugin_data: &serde_json::Value) -> Stri
 pub fn emit_error_packet(error: &str) -> String {
     let mut out = String::new();
     out.push_str("metadata:\n");
-    out.push_str(&format!("  format_version: {}\n", escape_string(FORMAT_VERSION)));
+    out.push_str(&format!(
+        "  format_version: {}\n",
+        escape_string(FORMAT_VERSION)
+    ));
     out.push_str(&format!("  error: {}\n", escape_string(error)));
     out
 }
@@ -196,7 +208,8 @@ mod tests {
 
     #[test]
     fn parse_meta_ignores_other_sections() {
-        let packet = "metadata:\n  format_version: \"1.0.0\"\n  workspace_key: \"wk\"\n\nnodes[0,]{...}\n";
+        let packet =
+            "metadata:\n  format_version: \"1.0.0\"\n  workspace_key: \"wk\"\n\nnodes[0,]{...}\n";
         let meta = parse_meta(packet);
         assert_eq!(meta.format_version.as_deref(), Some("1.0.0"));
     }
