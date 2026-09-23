@@ -490,8 +490,10 @@ fn repo_dir_of(root: &Path, repo: &RepoState) -> Option<PathBuf> {
     })
 }
 
-/// task 4.4：$HOME 本身被當 relay root 且非 git → 需輸出共用檔警告（不阻擋）。
-fn home_warning_needed(start: &Path, is_git: bool, home: Option<&std::ffi::OsStr>) -> bool {
+/// task 4.4（2026-09-24 修訂）：非 git 的 `$HOME` 本身被當 relay root → init 硬錯。
+/// env override 豁免是自動的：`workspace_root()` 已讓 env 指向 `$HOME` 時
+/// `start == $HOME` 且屬顯式表態，此判定只看「非 git 且 start 即 $HOME」。
+fn home_init_refused(start: &Path, is_git: bool, home: Option<&std::ffi::OsStr>) -> bool {
     !is_git && home.is_some_and(|h| Path::new(h) == start)
 }
 
@@ -548,6 +550,17 @@ impl RelayPlugin {
         if let Some(existing) = crate::root::resolve_root(&cwd) {
             return Err(Error::RootExists(existing.display().to_string()));
         }
+        // task 4.4（2026-09-24 修訂）：非 git 的 $HOME 本身 → 硬錯拒絕（寫入前）。
+        // env override 指向 $HOME 時屬顯式表態，workspace_root 已直接回傳該路徑，
+        // 但判定條件相同（非 git 且 start==HOME）——故須先排除 env 表態再拒絕。
+        if home_init_refused(
+            &start,
+            git_is_repo(&start),
+            std::env::var_os("HOME").as_deref(),
+        ) && std::env::var_os(crate::root::ENV_RELAY_ROOT).is_none()
+        {
+            return Err(Error::HomeInitRefused);
+        }
         std::fs::create_dir_all(start.join("specs"))?;
         std::fs::create_dir_all(start.join(".code-relay"))?;
         let mut state = RelayState::fresh();
@@ -573,17 +586,6 @@ impl RelayPlugin {
         ];
         if let Some(note) = gitignore_note {
             lines.push(format!("- {note}"));
-        }
-        // task 4.4：非 git 的 $HOME 本身 → 共用檔警告（不阻擋）
-        if home_warning_needed(
-            &start,
-            git_is_repo(&start),
-            std::env::var_os("HOME").as_deref(),
-        ) {
-            lines.push(
-                "- warning: relay root 是 $HOME 本身（非 git 目錄）；所有於 $HOME 啟動的 session 將共用此 relay.json"
-                    .to_string(),
-            );
         }
         lines.push("- run relaySave to register more repos".to_string());
         Ok(lines.join("\n"))
@@ -990,6 +992,75 @@ mod tests {
             before,
             "拒寫後狀態檔位元組不變"
         );
+    }
+
+    /// task 4.4 修訂（handoff-relay delta）：非 git 的 $HOME 本身 init → 硬錯、
+    /// 零檔案寫入。HOME env 以 serial 測試操控。
+    #[test]
+    #[serial]
+    fn init_refuses_non_git_home_without_writing_files() {
+        let dir = tempdir().unwrap();
+        // SAFETY（測試）：serial 序列化下改 HOME；結束必還原。
+        let orig = std::env::var_os("HOME");
+        std::env::set_var("HOME", dir.path());
+        let mut p = bind(dir.path());
+        let err = p.relay_init("p", None).unwrap_err().to_string();
+        let restored = orig.is_none() || std::env::var_os("HOME").is_some();
+        if let Some(h) = orig {
+            std::env::set_var("HOME", h);
+        }
+        assert!(restored);
+        assert!(err.starts_with("refusing to init relay at $HOME"), "{err}");
+        assert!(!dir.path().join("relay.json").exists(), "不得寫入狀態檔");
+        assert!(!dir.path().join("specs").exists(), "不得建 specs/");
+        assert!(
+            !dir.path().join(".code-relay").exists(),
+            "不得建 .code-relay/"
+        );
+    }
+
+    /// env override 指向 $HOME = 顯式表態 → 豁免硬錯（handoff-relay delta）。
+    #[test]
+    #[serial]
+    fn init_allows_env_override_pointing_at_home() {
+        let dir = tempdir().unwrap();
+        let orig_home = std::env::var_os("HOME");
+        let orig_env = std::env::var_os(crate::root::ENV_RELAY_ROOT);
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var(crate::root::ENV_RELAY_ROOT, dir.path());
+        let mut p = bind(dir.path());
+        let result = p.relay_init("p", None);
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        }
+        match orig_env {
+            Some(v) => std::env::set_var(crate::root::ENV_RELAY_ROOT, v),
+            None => std::env::remove_var(crate::root::ENV_RELAY_ROOT),
+        }
+        result.unwrap_or_else(|e| panic!("env 表態應豁免: {e}"));
+        assert!(dir.path().join("relay.json").is_file());
+    }
+
+    /// $HOME 本身為 git repo（罕見但合法）→ 允許 init（handoff-relay delta）。
+    #[test]
+    #[serial]
+    fn init_allows_git_home() {
+        let dir = tempdir().unwrap();
+        // 空 .git 目錄不是有效 repo（git 發現需 HEAD/objects/refs）；須真 init。
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        let orig_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", dir.path());
+        let mut p = bind(dir.path());
+        let result = p.relay_init("p", None);
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        }
+        result.unwrap_or_else(|e| panic!("git HOME 應允許 init: {e}"));
+        assert!(dir.path().join("relay.json").is_file());
     }
 
     /// D3 層 1（task 5.2）：root 外的絕對路徑明確表態 → 允許；path 存絕對路徑。

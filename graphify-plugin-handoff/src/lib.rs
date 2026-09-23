@@ -10,6 +10,7 @@
 //! - `sync_toon` 交換 .toon 封包（sync-toon-packet 契約）。
 //! - `on_graph_updated` 追蹤 active nodes（§4.2）。
 
+pub mod doctor;
 pub mod handoff;
 pub mod relay;
 pub mod root;
@@ -33,6 +34,8 @@ pub enum Error {
     NoRoot,
     #[error("relay.json already exists at {0}. Edit it or run relaySave.")]
     RootExists(String),
+    #[error("refusing to init relay at $HOME; run inside a project directory or set GRAPHIFY_RELAY_ROOT.")]
+    HomeInitRefused,
     #[error("repo \"{0}\" not registered. Run relaySave in that repo first.")]
     RepoNotRegistered(String),
     #[error("No active baton set and no repo given. Run relaySwitch <repo> first.")]

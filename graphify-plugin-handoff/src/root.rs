@@ -46,7 +46,9 @@ pub fn workspace_root(start: &Path) -> PathBuf {
 
 /// cwd 位於 git repo 內時回傳該 repo 的 toplevel（`git rev-parse --show-toplevel`），
 /// 否則 `None`。git 指令本身失敗（例如須先 `git safe.directory`）視同非 git 目錄。
-fn git_toplevel(start: &Path) -> Option<PathBuf> {
+/// doctor 的 no-scan 解析沿用此 helper（spec handoff-doctor：只認 git toplevel 或
+/// cwd 本身，不吃 `GRAPHIFY_RELAY_ROOT` env override）。
+pub fn git_toplevel(start: &Path) -> Option<PathBuf> {
     let out = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(start)
