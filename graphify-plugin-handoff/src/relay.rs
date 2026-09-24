@@ -492,6 +492,19 @@ fn repo_dir_of(root: &Path, repo: &RepoState) -> Option<PathBuf> {
     })
 }
 
+/// D1（relay-bare-repo-lookup）：裸 repo 名回查已註冊 `repos` 的目錄。
+/// 命中條件：同名 key 存在、`repo_dir_of` 解析出非空路徑、目錄仍存在。
+/// 未註冊或目錄失效 → None，呼叫端回退三層候選解析（fail-loud 不變）。
+/// 呼叫端須 fresh 讀盤（不吃 bind 快取，D2）。
+fn registered_dir_for(root: &Path, state: &RelayState, repo: &str) -> Option<PathBuf> {
+    let entry = state.repos.get(repo)?;
+    let dir = repo_dir_of(root, entry)?;
+    if !dir.is_dir() {
+        return None;
+    }
+    Some(dir.canonicalize().unwrap_or(dir))
+}
+
 /// task 4.4（2026-09-24 修訂）：非 git 的 `$HOME` 本身被當 relay root → init 硬錯。
 /// env override 豁免是自動的：`workspace_root()` 已讓 env 指向 `$HOME` 時
 /// `start == $HOME` 且屬顯式表態，此判定只看「非 git 且 start 即 $HOME」。
@@ -596,23 +609,29 @@ impl RelayPlugin {
     /// relaySave：寫入/更新目標 repo 狀態並渲染 RESUME.md。
     ///
     /// D2：baton save-then-switch — 每次 save 無條件把 active_baton 切到該 repo。
-    /// D3：寫入前把 repo 解析為實際目錄（絕對路徑 → root 相對 → MCP cwd 相對），
-    ///     全部失敗 → fail-loud 拒寫（不產生髒紀錄）；成功時 `RepoState.path`
-    ///     存絕對路徑，不以裸 repo 名稱作路徑預設值。
+    /// D3：寫入前把 repo 解析為實際目錄（絕對路徑 → 已註冊 repo 回查 →
+    ///     root 相對 → MCP cwd 相對），全部失敗 → fail-loud 拒寫
+    ///     （不產生髒紀錄）；成功時 `RepoState.path` 存絕對路徑，不以裸
+    ///     repo 名稱作路徑預設值。
     pub fn relay_save(&mut self, args: SaveArgs<'_>) -> Result<String, Error> {
         let root = self.root.clone().ok_or(Error::NoRoot)?;
         let cwd = self.cwd()?.to_path_buf();
-        // D3：解析在寫入前完成——顯式 repo 參數走三層解析；絕對路徑參數的
-        //     repo 名取 basename；無參數 = 目前 workspace root 本身（cwd 必存在）。
+        // D3 + D1（relay-bare-repo-lookup）：解析在寫入前完成——絕對路徑參數
+        //     明確表態；裸名先 fresh 讀盤回查已註冊 repos（命中即用，修
+        //     P0 殘餘缺口），未命中回退三層候選；repo 名取 basename/原樣；
+        //     無參數 = 目前 workspace root 本身（cwd 必存在）。
         let (repo_name, repo_dir) = match args.repo {
-            Some(r) => {
+            Some(r) if Path::new(r).is_absolute() => {
                 let resolved = resolve_repo_path(&root, &cwd, r)?;
-                let name = if Path::new(r).is_absolute() {
-                    basename(&resolved)
-                } else {
-                    r.to_string()
-                };
-                (name, resolved)
+                (basename(&resolved), resolved)
+            }
+            Some(r) => {
+                let resolved = crate::state::load(&root.join(RELAY_JSON))
+                    .ok()
+                    .flatten()
+                    .and_then(|s| registered_dir_for(&root, &s, r))
+                    .map_or_else(|| resolve_repo_path(&root, &cwd, r), Ok)?;
+                (r.to_string(), resolved)
             }
             None => (
                 basename(&cwd),
@@ -1015,6 +1034,71 @@ mod tests {
             err.matches(&candidate).count(),
             1,
             "同源候選須去重（重複 = 回歸信號）: {err}"
+        );
+    }
+
+    /// spec「裸名回查已註冊 repo 命中」：init 註冊 workspace 自身後，
+    /// 裸名 save 命中已註冊路徑，不再撞 root/<name> 不存在（P0 殘餘缺口）。
+    #[test]
+    fn bare_name_hits_registered_repo() {
+        let dir = tempdir().unwrap();
+        let mut p = bind(dir.path());
+        p.relay_init("ctx", None).unwrap();
+        let name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        p.relay_save(SaveArgs {
+            repo: Some(&name),
+            ..Default::default()
+        })
+        .unwrap();
+        let state = crate::state::load(&dir.path().join(RELAY_JSON))
+            .unwrap()
+            .unwrap();
+        let saved = PathBuf::from(&state.repos[&name].path);
+        assert!(
+            saved.is_dir(),
+            "已註冊路徑須為存在目錄: {}",
+            saved.display()
+        );
+        assert_eq!(saved.file_name().unwrap().to_string_lossy(), name);
+    }
+
+    /// spec「已註冊路徑失效時回退既有解析」：註冊過的 repo 目錄被刪後，
+    /// 裸名 save 回退三層解析並 fail-loud 拒寫（不寫入失效路徑）。
+    #[test]
+    fn registered_dead_dir_falls_back_and_fails_loud() {
+        let root = tempdir().unwrap();
+        let ext = tempdir().unwrap();
+        let ext_name = ext
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let mut p = bind(root.path());
+        p.relay_init("ctx", None).unwrap();
+        // 以絕對路徑註冊外部 repo（D3 層 1：明確表態）。
+        p.relay_save(SaveArgs {
+            repo: Some(ext.path().to_str().unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        // 刪掉外部目錄 → 已註冊路徑失效 → 回退三層候選 → 全落空。
+        std::fs::remove_dir_all(ext.path()).unwrap();
+        let err = p
+            .relay_save(SaveArgs {
+                repo: Some(&ext_name),
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("repo path could not be resolved"),
+            "須 fail-loud 拒寫: {err}"
         );
     }
 
