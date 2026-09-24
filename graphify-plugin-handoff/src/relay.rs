@@ -563,6 +563,10 @@ impl RelayPlugin {
         let cwd = self.cwd()?.to_path_buf();
         let start = crate::root::workspace_root(&cwd);
         if let Some(existing) = crate::root::resolve_root(&cwd) {
+            // D7（mcp-tool-ux-v2 6.3）：既有未完成狀態先自動 flush 現況 + render
+            //     RESUME 快照；但 D4 RootExists 防護不放行 init（fresh 建立會覆寫
+            //     既有 repos/handoffs）→ save-then-refuse。save 失敗 fail-loud。
+            self.relay_save(SaveArgs::default())?;
             return Err(Error::RootExists(existing.display().to_string()));
         }
         // task 4.4（2026-09-24 修訂）：非 git 的 $HOME 本身 → 硬錯拒絕（寫入前）。
@@ -684,9 +688,18 @@ impl RelayPlugin {
     }
 
     /// relayClose：consistency check + spec diff + next_step.md + 原子 commit。
+    ///
+    /// D7（mcp-tool-ux-v2 6.1）：close 前先自動 relay_save flush 現況（冪等；
+    /// MCP close arm 的 save-then-close 只在帶 state params 時觸發，此處補無條件
+    /// 邊界保存）；save 失敗 → fail-loud，close ritual 不執行。
     pub fn relay_close(&mut self, repo: Option<&str>, next: Option<&str>) -> Result<String, Error> {
         let root = self.root.clone().ok_or(Error::NoRoot)?;
         let cwd = self.cwd()?.to_path_buf();
+        self.relay_save(SaveArgs {
+            repo,
+            next_session_starter: next,
+            ..Default::default()
+        })?;
         let repo_name = repo.map(str::to_string).unwrap_or_else(|| basename(&cwd));
         let (ok, issues) = consistency_check(&root);
         let mut diffs: Vec<(String, String)> = Vec::new();
@@ -808,6 +821,10 @@ impl RelayPlugin {
         if !exists {
             return Err(Error::RepoNotRegistered(repo_name));
         }
+        // D7（mcp-tool-ux-v2 6.2）：切 baton 前先自動 relay_save flush 現況
+        //     （SaveArgs 預設 = 無參 relay_save 的 last_updated/render 語意）；
+        //     save 失敗 → fail-loud 中止切換（不切 baton、不吞錯）。
+        self.relay_save(SaveArgs::default())?;
         self.locked(|state| {
             state.active_baton = repo_name.clone();
         })?;
@@ -1719,5 +1736,151 @@ mod tests {
         let out = p.relay_close(Some("api"), None).unwrap();
         assert!(out.contains("Closing ritual for \"api\"."));
         assert!(out.contains("Snapshot: skipped"), "{out}");
+    }
+
+    /// 哨兵時間戳：flush 前後的 `last_updated` 差異可觀測自動 save。
+    const SENTINEL: &str = "2000-01-01T00:00:00.000Z";
+
+    /// 把指定 repo 的 `last_updated` 改成哨兵值並直接落盤（locked 重讀可觀測 flush）。
+    fn stamp_sentinel_last_updated(
+        dir: &Path,
+        name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = dir.join(RELAY_JSON);
+        let mut st = crate::state::load(&path)?.ok_or("relay.json missing")?;
+        st.repos
+            .get_mut(name)
+            .ok_or("repo not registered")?
+            .last_updated = SENTINEL.to_string();
+        crate::state::save_atomic(&path, &st)?;
+        Ok(())
+    }
+
+    /// D7（mcp-tool-ux-v2 6.2）：switch 切 baton 前先自動 relay_save（SaveArgs 預設
+    /// flush）——flush 對象（cwd repo）的 last_updated 被刷新；且 save 先於切換
+    /// （relay_save 會把 baton 切到 flush 對象，最終 baton 須仍是目標 repo）。
+    #[test]
+    #[serial]
+    fn switch_auto_saves_before_baton_handoff() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let mut p = bind(dir.path());
+        p.relay_init("p", None)?;
+        std::fs::create_dir_all(dir.path().join("api"))?;
+        std::fs::create_dir_all(dir.path().join("web"))?;
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })?;
+        p.relay_save(SaveArgs {
+            repo: Some("web"),
+            ..Default::default()
+        })?;
+        let name = basename(dir.path());
+        stamp_sentinel_last_updated(dir.path(), &name)?;
+        let out = p.relay_switch("api", None)?;
+        assert!(out.starts_with("Baton passed to \"api\"."), "{out}");
+        let st = crate::state::load(&dir.path().join(RELAY_JSON))?.ok_or("relay.json missing")?;
+        let flushed = &st.repos.get(&name).ok_or("cwd repo missing")?.last_updated;
+        assert_ne!(flushed, SENTINEL, "switch 前須自動 flush cwd repo");
+        assert_eq!(
+            st.active_baton, "api",
+            "save 先於切換：save 後置會把 baton 留在 flush 對象"
+        );
+        Ok(())
+    }
+
+    /// D7（mcp-tool-ux-v2 6.1）：close 先自動 relay_save 再跑 close ritual——
+    /// relay_add 新增的 open_threads（不渲染 RESUME）須出現在 close 重渲染的
+    /// RESUME.md，證明 close 在 ritual 前做了 save（含 RESUME render）。
+    #[test]
+    #[serial]
+    fn close_auto_saves_before_ritual() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let mut p = bind(dir.path());
+        p.relay_init("p", None)?;
+        std::fs::create_dir_all(dir.path().join("api"))?;
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })?;
+        let todo = dir.path().join("todo.md");
+        std::fs::write(&todo, "- thread-CLOSE-AUTOSAVE\n")?;
+        p.relay_add(&todo, Some("api"))?; // 只更新狀態，不渲染 RESUME
+        let out = p.relay_close(Some("api"), Some("next"))?;
+        assert!(out.contains("Closing ritual for \"api\"."), "{out}");
+        let resume = std::fs::read_to_string(dir.path().join("RESUME.md"))?;
+        assert!(
+            resume.contains("thread-CLOSE-AUTOSAVE"),
+            "close 前自動 save 須重渲染 RESUME: {resume}"
+        );
+        Ok(())
+    }
+
+    /// D7（mcp-tool-ux-v2 6.3）：init 遇既有未完成狀態（RootExists）——先自動 save
+    /// flush 現況（刷新 last_updated + render RESUME 快照），init 仍被 D4 防護拒絕
+    /// （既有狀態不得被 fresh 建立覆寫）。
+    #[test]
+    #[serial]
+    fn init_over_existing_root_auto_saves_then_refuses() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let mut p = bind(dir.path());
+        p.relay_init("p", None)?;
+        assert!(
+            !dir.path().join("RESUME.md").exists(),
+            "init 本身不渲染 RESUME"
+        );
+        let name = basename(dir.path());
+        stamp_sentinel_last_updated(dir.path(), &name)?;
+        let err = p
+            .relay_init("x", None)
+            .err()
+            .ok_or("init must refuse existing root")?
+            .to_string();
+        assert!(err.starts_with("relay.json already exists at"), "{err}");
+        let st = crate::state::load(&dir.path().join(RELAY_JSON))?.ok_or("relay.json missing")?;
+        let repo = st.repos.get(&name).ok_or("cwd repo missing")?;
+        assert_ne!(repo.last_updated, SENTINEL, "拒絕前須自動 flush 現況");
+        assert_eq!(
+            repo.project_context.as_deref(),
+            Some("p"),
+            "init 不得覆寫既有狀態"
+        );
+        assert!(
+            dir.path().join("RESUME.md").is_file(),
+            "須 render RESUME 快照"
+        );
+        Ok(())
+    }
+
+    /// D7（mcp-tool-ux-v2 6.2 fail-loud）：自動 save 失敗 → 中止切換並回傳錯誤，
+    /// 不得切 baton（不得默默吞）。
+    #[test]
+    #[serial]
+    fn switch_aborts_when_auto_save_fails() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let mut p = bind(dir.path());
+        p.relay_init("p", None)?;
+        std::fs::create_dir_all(dir.path().join("api"))?;
+        std::fs::create_dir_all(dir.path().join("web"))?;
+        p.relay_save(SaveArgs {
+            repo: Some("api"),
+            ..Default::default()
+        })?;
+        p.relay_save(SaveArgs {
+            repo: Some("web"),
+            ..Default::default()
+        })?;
+        // RESUME.md 變目錄 → relay_save 的 render 寫入失敗 → 自動 save fail-loud。
+        std::fs::remove_file(dir.path().join("RESUME.md"))?;
+        std::fs::create_dir(dir.path().join("RESUME.md"))?;
+        let err = p
+            .relay_switch("api", None)
+            .err()
+            .ok_or("switch must abort when auto-save fails")?
+            .to_string();
+        assert!(err.starts_with("io:"), "{err}");
+        let st = crate::state::load(&dir.path().join(RELAY_JSON))?.ok_or("relay.json missing")?;
+        assert_ne!(st.active_baton, "api", "自動 save 失敗 → 不得切 baton");
+        Ok(())
     }
 }
