@@ -14,7 +14,7 @@ This document describes **optional coordination strategies** between Code Relay 
 | Scenario | How it works | When to use |
 |----------|--------------|-------------|
 | **A. Document augmentation** | Agent runs `opendoc-mcp.search` over `specs/*.md` or uploaded research PDFs; inline results into `volatile_state` via `relaySave`. | User is refining a feature and needs to reference design docs, spec intents, or external research that lives in the doc store. |
-| **B. Code dependency mapping** | Agent invokes `graphify.query_graph` (e.g., callers of `relaySave`) and captures key insights into `volatile_state` or `next_session_starter`. | The user needs to understand impact of refactoring, check test coverage, or map handoffs. |
+| **B. Code dependency mapping** | Agent invokes `graphify_graph_query` (e.g., callers of `relaySave`) and captures key insights into `volatile_state` or `next_session_starter`. | The user needs to understand impact of refactoring, check test coverage, or map handoffs. |
 | **C. Combined search** | First `opendoc-mcp.search` for specs, then `graphify` for functions mentioned in those specs, finally save a consolidated handoff. | Complex tasks requiring both documentation context and structural code knowledge (e.g., “implement X based on spec Y and refactor related callers”). |
 | **D. Research persistence** | Agent uploads PDFs/screencaps, uses `opendoc-mcp` to extract and index them, and saves the extracted intent into `specs/research.md` via `relayAdd` (or manual file edit then `relaySave`). | When the user provides raw data (government PDFs, terminal output, etc.) and expects a structured, searchable artifact. |
 
@@ -60,7 +60,7 @@ opendoc-mcp.search --query "spec intent for auth"   ← optional context enrichm
 
 ### 3.3 Code graph traversal
 
-**Command**: `!relayResume` → **optional** `graphify.query_graph` → **optional** `!relaySave` with code graph insights.
+**Command**: `!relayResume` → **optional** `graphify_graph_query` → **optional** `!relaySave` with code graph insights.
 
 **Example** (find all callers of `relaySave`):
 
@@ -86,7 +86,7 @@ opendoc-mcp.search --query "spec intent for auth"   ← optional context enrichm
 
 | System | Owns | Client can read | Client can write |
 |--------|------|-----------------|------------------|
-| Code Relay (via GraphifyMCP) | `relay.json`, `RESUME.md`, `next_step.md`, `specs/*.md` | N/A (read via `relayStatus`/`relayResume`) | via its own tools (`relaySave`, `relayAdd`, etc.) |
+| Code Relay (via GraphifyMCP) | `relay.json`, `RESUME.md`, `next_step.md`, `specs/*.md` | N/A (read via `graphify_relay_status`/`graphify_relay_resume`) | via its own tools (`graphify_relay_save`, `graphify_relay_add`, etc.) |
 | `opendoc-mcp` | Indexed documents, search indices | Yes (search results) | Yes (via its own tools, e.g., `index` if supported) |
 | `graphify` | Code graph data (not exposed as files) | Yes (query tools) | N/A (no write tools) |
 
@@ -131,7 +131,7 @@ opendoc-mcp.search --query "spec intent for auth"   ← optional context enrichm
 | Area | Current state | Possible extension |
 |------|---------------|--------------------|
 | **Automatic enrichment** | Optional (agent decides) | Auto-ping `opendoc` for specs on every `relayResume` (configurable via skill params) |
-| **Graph-based handoff** | Manual query + inline | On `relaySave`, automatically append `graphify.trace_path(<repo_name>)` insights to `next_session_starter` (configurable) |
+| **Graph-based handoff** | Manual query + inline | On `relaySave`, automatically append `graphify_graph_trace_path(<repo_name>)` insights to `next_session_starter` (configurable) |
 | **Spec ↔ doc sync** | Manual `opendoc.index` + `relayAdd` | Watch `specs/*.md` changes and auto-index into opendoc for cross-search |
 
 For now, keep it simple; each extension can be added as a separate agent capability or CLI helper, not baked into the core skill.
@@ -141,7 +141,7 @@ For now, keep it simple; each extension can be added as a separate agent capabil
 - [ ] Graphify embeds `graphify-plugin-handoff`; GraphifyMCP exposes the `relay*` tools.
 - [ ] Both `opendoc-mcp` and `graphify` are registered in the user's MCP client configuration.
 - [ ] The agent is instructed to use `opendoc-mcp.search` / `opendoc-mcp.read` for spec intent and research.
-- [ ] The agent is instructed to use `graphify.query_graph` for code dependency mapping.
+- [ ] The agent is instructed to use `graphify_graph_query` for code dependency mapping.
 - [ ] Example workflows (see above) are documented in `INTEGRATION.md`.
 - [ ] The skill (`SKILL.md`) notes optional nature and provides one-line commands for enrichment.
 - [ ] Privacy constraints (no internal hostnames, no private config) are respected by all systems.

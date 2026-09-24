@@ -46,7 +46,7 @@ Each operation lists the MCP tool, the CLI equivalent, the frozen return shape, 
 
 ### 4.1 Init
 
-- **MCP**: `relayInit` (`project_context`, `kind?`)
+- **MCP**: `graphify_relay_init` (`project_context`, `kind?`)
 - **CLI**: `graphify handoff init <project> [--kind backend|frontend|infra]`
 
 **Return**:
@@ -64,7 +64,7 @@ Initialized relay at <cwd>/relay.json
 
 ### 4.2 Save
 
-- **MCP**: `relaySave` (`repo?`, `role?`, `active_phase?`, `volatile_state?`, `confidence?`, `next_session_starter?`, `debt_tag?`, `kind?`)
+- **MCP**: `graphify_relay_save` (`repo?`, `role?`, `active_phase?`, `volatile_state?`, `confidence?`, `next_session_starter?`, `debt_tag?`, `kind?`)
 - **CLI**: `graphify handoff save [--repo R] [--role R] [--phase P] [--volatile V] [--conf 0-5] [--next N] [--debt D] [--kind K]`
 
 **Return**:
@@ -82,7 +82,7 @@ Active baton: <active_baton>
 
 ### 4.3 Close
 
-- **MCP**: `relayClose` (`repo?`, `next_session_starter?`)
+- **MCP**: `graphify_relay_close` (`repo?`, `next_session_starter?`)
 - **CLI**: `graphify handoff close [--repo R] [--next N]`
 
 **Return** (concatenated report lines):
@@ -105,7 +105,7 @@ committed: <hash> | nothing to commit (files ignored or missing) | not a git rep
 
 ### 4.4 Switch
 
-- **MCP**: `relaySwitch` (`repo`, `kind?`)
+- **MCP**: `graphify_relay_switch` (`repo`, `kind?`)
 - **CLI**: `graphify handoff switch <repo> [--kind K]`
 
 **Return**:
@@ -122,7 +122,7 @@ Baton passed to "<repo>".
 
 ### 4.5 Resume
 
-- **MCP**: `relayResume` (`repo?`, `kind?`)
+- **MCP**: `graphify_relay_resume` (`repo?`, `kind?`)
 - **CLI**: `graphify handoff resume [--repo R] [--kind K]`
 
 **Return**: rendered resume (same text as legacy plugin). Also writes `RESUME.md` at the relay root.
@@ -133,7 +133,7 @@ Baton passed to "<repo>".
 
 ### 4.6 Status
 
-- **MCP**: `relayStatus`
+- **MCP**: `graphify_relay_status`
 - **CLI**: `graphify handoff status`
 
 **Return** (multiline status report):
@@ -151,7 +151,7 @@ Updated: <updated_at>
 
 ### 4.7 Add
 
-- **MCP**: `relayAdd` (`file`, `repo?`)
+- **MCP**: `graphify_relay_add` (`file`, `repo?`)
 - **CLI**: `graphify handoff add <file> [--repo R]`
 
 **Return**:
@@ -194,7 +194,7 @@ graphify handoff status            # shows repo registered, baton set
 graphify handoff close --next done # Consistency: OK, committed: <hash>
 ```
 
-MCP path: the same cycle through `graphify_relayInit` → `relaySave` → `relayStatus` → `relayClose`.
+MCP path: the same cycle through `graphify_relay_init` → `graphify_relay_save` → `graphify_relay_status` → `graphify_relay_close`.
 
 ## 8. Installing in other agents
 

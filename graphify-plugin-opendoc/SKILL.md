@@ -11,7 +11,7 @@ Doc↔code traceability hands the workspace a bidirectional link registry via a 
 
 - **Links**: `# Symbol: <name>` hard-link annotations inside markdown spec blocks (`@spec:<path>` for back-references)
 - **Two channels**, same operations:
-  - **MCP tools** (`opendocIndex` / `opendocGetContext` / `opendocAuditDrift`) — the efficiency layer, when registered
+  - **MCP tools** (`graphify_opendoc_index` / `graphify_opendoc_get_context` / `graphify_opendoc_audit_drift`) — the efficiency layer, when registered
   - **CLI** (`graphify opendoc ...`) — the resilience layer, always available
 - **Direct SQLite reads** — zero-dependency introspection (read-only)
 
@@ -48,7 +48,7 @@ Each operation lists the MCP tool (where one exists), the CLI equivalent, the fr
 
 ### 4.1 Index
 
-- **MCP**: `opendocIndex` — params: optional `doc_paths` (array of relative paths; if omitted, all `.md` under workspace root)
+- **MCP**: `graphify_opendoc_index` — params: optional `doc_paths` (array of relative paths; if omitted, all `.md` under workspace root)
 - **CLI**: `graphify opendoc index [--doc-paths a.md,b.md]`
 
 **Return**:
@@ -73,7 +73,7 @@ Each operation lists the MCP tool (where one exists), the CLI equivalent, the fr
 
 ### 4.3 Trace-code
 
-- **MCP**: `opendocGetContext` — params: `symbol` (qualified string, e.g. `crate::auth::verify_token`)
+- **MCP**: `graphify_opendoc_get_context` — params: `symbol` (qualified string, e.g. `crate::auth::verify_token`)
 - **CLI**: `graphify opendoc trace-code <symbol>`
 
 **Return**: tab-separated rows `<spec_hash>\t<symbol>\t<doc_path>`.
@@ -84,7 +84,7 @@ Each operation lists the MCP tool (where one exists), the CLI equivalent, the fr
 
 ### 4.4 Audit-drift
 
-- **MCP**: `opendocAuditDrift` — no params.
+- **MCP**: `graphify_opendoc_audit_drift` — no params.
 - **CLI**: `graphify opendoc audit-drift`
 
 **Return**: per-line `<spec_hash>\t<symbol>\t<doc_path>\t<UpToDate|DocChanged|DocMissing>`, preceded by header `[opendoc] <n> drift item(s):` when non-empty. If zero indexed links:
@@ -161,7 +161,7 @@ graphify opendoc audit-drift
 graphify opendoc trace-code crate::auth::verify_token
 ```
 
-Must verify: index returns `1 link rows`; drift returns `UpToDate`; trace returns the tab-row. MCP path: the same cycle through `opendocIndex` → `opendocAuditDrift` → `opendocGetContext`.
+Must verify: index returns `1 link rows`; drift returns `UpToDate`; trace returns the tab-row. MCP path: the same cycle through `graphify_opendoc_index` → `graphify_opendoc_audit_drift` → `graphify_opendoc_get_context`.
 
 ## 7. Installing in other agents
 

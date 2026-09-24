@@ -18,12 +18,12 @@
 - **review_bindings 表**：併入專案共用的 `graphify.db`，記錄評語狀態、
   Severity 與綁定時節點的結構 hash（drift guard 用，Slice 1 採 Node.id
   presence diff，signature_hash 寫入固定預設值 `v1_default` — YAGNI 裁決）。
-- **MCP 自動註冊**：`review_ingest` / `review_get_context` /
-  `review_resolve` / `review_search_crg` 由 graphify-mcp 於啟動時自動註冊。
+- **MCP 自動註冊**：`graphify_review_ingest` / `graphify_review_get_context` /
+  `graphify_review_resolve` / `graphify_review_search_crg` 由 graphify-mcp 於啟動時自動註冊。
 - **Drift Guard & Auto-Resolution（Slice 1）**：`on_graph_updated` 偵測
   review 綁定的 canonical node 已不存在於最新 GraphOutput（rename / 移除 /
   檔案消失）→ 自動標 `resolved` + `resolved_by='auto:node_gone'`，不需 CRG
-  端配合。graphify-mcp 在 `graphify_notify_plugins` 與 `graph_reindex`
+  端配合。graphify-mcp 在 `graphify_plugin_notify` 與 `graphify_graph_reindex`
   後觸發；CLI 在每次 review 指令前 `feed_graph_and_drift` 觸發。
 - **review_resolve 完整化**：手動銷案接受 `resolved_by`（如 `manual`）與
   `resolution_reason` 參數，寫入 `review_bindings` 的 `resolved_by` /
@@ -40,7 +40,7 @@
   `detect_changes_tool`，取回 `review_priorities`（node dict + risk_score），
   剝絕對路徑為 workspace 相對路徑後升維綁定至 `review_bindings`。CRG 不可達
   時 graceful 退避（0 bound, 0 orphan，不阻塞）。CLI：`graphify review
-  search-crg`；MCP：`reviewSearchCrg`。環境變數 `CRG_BASE_URL` 指定 CRG endpoint
+  search-crg`；MCP：`graphify_review_search_crg`。環境變數 `CRG_BASE_URL` 指定 CRG endpoint
   （未設則 NoOp）。
 
 ## 資料契約
