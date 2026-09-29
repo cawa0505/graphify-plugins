@@ -28,10 +28,13 @@ use state::RelayState;
 pub const PLUGIN_ID: &str = "graphify-plugin-handoff";
 
 /// 統一錯誤型別。文字為 PROTOCOL.md 凍結語意，消費端可能逐字比對。
+/// D4（relay-remote-transport）：無 root 錯誤已分層——WorkspacePathNotFound
+/// （路徑不在本機）、NoRelayJson（存在但未初始化）、InitFailed（寫入失敗）。
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.")]
-    NoRoot,
+    /// D4：workspace 路徑在本機不存在/不是目錄（附 hostname 供 gateway 除錯）。
+    #[error("workspace path not found on this host: {0} (hostname: {1})")]
+    WorkspacePathNotFound(String, String),
     #[error("relay.json already exists at {0}. Edit it or run relaySave.")]
     RootExists(String),
     #[error("refusing to init relay at $HOME; run inside a project directory or set GRAPHIFY_RELAY_ROOT.")]
@@ -42,6 +45,12 @@ pub enum Error {
     NoActiveBaton,
     #[error("repo \"{0}\" not registered.")]
     RepoUnknown(String),
+    /// D4：路徑存在但未初始化——帶實際 workspace root（取代模稜兩可文案）。
+    #[error("No relay.json found at {0} — run relayInit first, or set GRAPHIFY_RELAY_ROOT.")]
+    NoRelayJson(String),
+    /// D4：init 寫入 IO 失敗（不再裸 `io: Permission denied`）。
+    #[error("init failed: {0}")]
+    InitFailed(String),
     #[error("repo path could not be resolved. Tried: {0}. Create the repo directory under the relay root or pass an absolute path.")]
     RepoPathUnresolved(String),
     #[error("File not found: {0}")]
@@ -125,7 +134,8 @@ impl RelayPlugin {
     fn produce_packet(&self) -> Vec<u8> {
         let key = self.get_workspace_key().to_string();
         let Some(state) = self.state.as_ref() else {
-            return sync::emit_error_packet("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.").into_bytes();
+            // D4：與 relay 工具同一分層錯誤（path 不存在 vs 未初始化）。
+            return sync::emit_error_packet(&self.bind_error().to_string()).into_bytes();
         };
         let data = serde_json::json!({
             "handoff": state,
@@ -265,10 +275,12 @@ mod tests {
         assert!(p.root().is_none());
         let out = p.sync_toon(None);
         let meta = sync::parse_meta(&String::from_utf8_lossy(&out));
-        assert_eq!(
-            meta.error.as_deref(),
-            Some("No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.")
+        // D4：路徑存在但未初始化 → 封包錯誤帶實際 workspace root。
+        let expected = format!(
+            "No relay.json found at {} — run relayInit first, or set GRAPHIFY_RELAY_ROOT.",
+            dir.path().display()
         );
+        assert_eq!(meta.error.as_deref(), Some(expected.as_str()));
     }
 
     #[test]

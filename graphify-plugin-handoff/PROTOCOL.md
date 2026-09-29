@@ -75,9 +75,15 @@ with zero file writes.
 GRAPHIFY_RELAY_ROOT.`); creates the state file at the workspace root
 otherwise.
 
-**Fail-fast**: any non-init tool with no bound root returns
-`No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.`
-— never an unbounded search or guess.
+**Fail-fast**: any non-init tool with no bound root returns a layered,
+debuggable error (relay-remote-transport D4) — never an unbounded search or
+guess:
+- workspace path missing / not a directory on this host:
+  `workspace path not found on this host: <p> (hostname: <hostname>)`
+- path exists but not initialized (status/save/close):
+  `No relay.json found at <root> — run relayInit first, or set GRAPHIFY_RELAY_ROOT.`
+- `relayInit` write IO failure: `init failed: <io error>` (not a bare
+  `io: <error>`).
 
 ## 3. Tools
 

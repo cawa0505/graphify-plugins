@@ -531,12 +531,40 @@ impl RelayPlugin {
         self.ctx
             .as_ref()
             .map(|c| Path::new(&c.root_path))
-            .ok_or(Error::NoRoot)
+            .ok_or_else(|| self.bind_error())
+    }
+
+    /// D4（relay-remote-transport）：未成功定位 root 時的可除錯化錯誤。
+    ///
+    /// 分層（design.md D4）：(1) workspace 路徑在本機不存在/不是目錄 →
+    /// `workspace path not found on this host: <p> (hostname: <h>)`——gateway
+    /// 拓撲下 caller 看不出服務在哪台跑；(2) 路徑存在但無 relay.json →
+    /// `No relay.json found at <root> — run relayInit first`（保留現文案，
+    /// 帶實際 root）。
+    pub(crate) fn bind_error(&self) -> Error {
+        let host = std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "unknown-host".to_string());
+        let Some(ctx) = self.ctx.as_ref() else {
+            return Error::WorkspacePathNotFound(
+                "(unbound: no workspace context)".to_string(),
+                host,
+            );
+        };
+        let root_path = Path::new(&ctx.root_path);
+        if !root_path.is_dir() {
+            return Error::WorkspacePathNotFound(ctx.root_path.clone(), host);
+        }
+        Error::NoRelayJson(crate::root::workspace_root(root_path).display().to_string())
     }
 
     /// read-modify-write（PROTOCOL.md §7）：fs2 鎖 → 重讀磁碟 → 變更 → persist。
     fn locked<F: FnOnce(&mut RelayState)>(&mut self, f: F) -> Result<(), Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
         crate::state::ensure_relay_dir(&root)?;
         let lock = File::create(root.join(".relay/relay.json.lock"))?;
         lock.lock_exclusive()?;
@@ -580,8 +608,10 @@ impl RelayPlugin {
         {
             return Err(Error::HomeInitRefused);
         }
-        std::fs::create_dir_all(start.join("specs"))?;
-        std::fs::create_dir_all(start.join(".code-relay"))?;
+        std::fs::create_dir_all(start.join("specs"))
+            .map_err(|e| Error::InitFailed(e.to_string()))?;
+        std::fs::create_dir_all(start.join(".code-relay"))
+            .map_err(|e| Error::InitFailed(e.to_string()))?;
         let mut state = RelayState::fresh();
         // D1：project_context 落 target repo；全域欄位維持空字串（唯讀 fallback）。
         //     target = 目前 repo（workspace root basename，等同 relaySave 無 repo 參數的目標）。
@@ -594,7 +624,8 @@ impl RelayPlugin {
         repo.path = start.display().to_string(); // workspace root 本身，絕對路徑
         repo.project_context = Some(project_context.to_string());
         repo.last_updated = now_iso();
-        crate::state::persist(&start, &mut state)?;
+        // D4：init 寫入 IO 失敗 → `init failed: <io error>`（不再裸 `io: ...`）。
+        crate::state::persist(&start, &mut state).map_err(|e| Error::InitFailed(e.to_string()))?;
         let gitignore_note = ensure_gitignore(&start);
         self.root = Some(start.clone());
         self.state = Some(state);
@@ -618,7 +649,7 @@ impl RelayPlugin {
     ///     （不產生髒紀錄）；成功時 `RepoState.path` 存絕對路徑，不以裸
     ///     repo 名稱作路徑預設值。
     pub fn relay_save(&mut self, args: SaveArgs<'_>) -> Result<String, Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
         let cwd = self.cwd()?.to_path_buf();
         // D3 + D1（relay-bare-repo-lookup）：解析在寫入前完成——絕對路徑參數
         //     明確表態；裸名先 fresh 讀盤回查已註冊 repos（命中即用，修
@@ -676,7 +707,7 @@ impl RelayPlugin {
             // D2：save-then-switch（移除 first-save-wins guard）
             state.active_baton = repo_name.clone();
         })?;
-        let state = self.state.as_ref().ok_or(Error::NoRoot)?;
+        let state = self.state.as_ref().ok_or_else(|| self.bind_error())?;
         let repo = state
             .repos
             .get(&repo_name)
@@ -693,7 +724,7 @@ impl RelayPlugin {
     /// MCP close arm 的 save-then-close 只在帶 state params 時觸發，此處補無條件
     /// 邊界保存）；save 失敗 → fail-loud，close ritual 不執行。
     pub fn relay_close(&mut self, repo: Option<&str>, next: Option<&str>) -> Result<String, Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
         let cwd = self.cwd()?.to_path_buf();
         self.relay_save(SaveArgs {
             repo,
@@ -712,7 +743,7 @@ impl RelayPlugin {
                 }
             }
         })?;
-        let state = self.state.as_ref().ok_or(Error::NoRoot)?;
+        let state = self.state.as_ref().ok_or_else(|| self.bind_error())?;
         let repo = state
             .repos
             .get(&repo_name)
@@ -812,7 +843,7 @@ impl RelayPlugin {
 
     /// relaySwitch：把 baton 交給另一個已註冊 repo。
     pub fn relay_switch(&mut self, repo: &str, kind: Option<&str>) -> Result<String, Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
         let repo_name = repo.to_string();
         let exists = self
             .state
@@ -828,7 +859,7 @@ impl RelayPlugin {
         self.locked(|state| {
             state.active_baton = repo_name.clone();
         })?;
-        let state = self.state.as_ref().ok_or(Error::NoRoot)?;
+        let state = self.state.as_ref().ok_or_else(|| self.bind_error())?;
         let repo = state
             .repos
             .get(&repo_name)
@@ -843,8 +874,8 @@ impl RelayPlugin {
         repo: Option<&str>,
         kind: Option<&str>,
     ) -> Result<String, Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
-        let state = self.state.as_ref().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
+        let state = self.state.as_ref().ok_or_else(|| self.bind_error())?;
         let target = repo
             .map(str::to_string)
             .unwrap_or_else(|| state.active_baton.clone());
@@ -860,8 +891,8 @@ impl RelayPlugin {
 
     /// relayStatus：全 repo 摘要。
     pub fn relay_status(&mut self) -> Result<String, Error> {
-        let root = self.root.clone().ok_or(Error::NoRoot)?;
-        let state = self.state.as_ref().ok_or(Error::NoRoot)?;
+        let root = self.root.clone().ok_or_else(|| self.bind_error())?;
+        let state = self.state.as_ref().ok_or_else(|| self.bind_error())?;
         let mut lines = vec![
             format!("Relay root: {}", root.display()),
             // D1：優先顯示 baton repo 自身 context，無 → 舊全域 fallback → (unset)。
@@ -1035,6 +1066,7 @@ mod tests {
     /// task 1.3 / spec「Tried 候選去重」：caller path == root（direct-spawn 常態）
     /// 時兩層同源，錯誤訊息的候選不得重複同值（重複 = 回歸信號）。
     #[test]
+    #[serial]
     fn tried_windows_dedup() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
@@ -1057,6 +1089,7 @@ mod tests {
     /// spec「裸名回查已註冊 repo 命中」：init 註冊 workspace 自身後，
     /// 裸名 save 命中已註冊路徑，不再撞 root/<name> 不存在（P0 殘餘缺口）。
     #[test]
+    #[serial]
     fn bare_name_hits_registered_repo() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path());
@@ -1087,6 +1120,7 @@ mod tests {
     /// spec「已註冊路徑失效時回退既有解析」：註冊過的 repo 目錄被刪後，
     /// 裸名 save 回退三層解析並 fail-loud 拒寫（不寫入失效路徑）。
     #[test]
+    #[serial]
     fn registered_dead_dir_falls_back_and_fails_loud() {
         let root = tempdir().unwrap();
         let ext = tempdir().unwrap();
@@ -1634,13 +1668,45 @@ mod tests {
     fn no_root_frozen_error_for_all_tools() {
         let dir = tempdir().unwrap();
         let mut p = bind(dir.path()); // 無 relay.json
-        let frozen = "No relay.json found at the workspace root. Run relayInit first, or set GRAPHIFY_RELAY_ROOT.";
+                                      // D4：路徑存在但未初始化 → 文案帶實際 workspace root。
+        let frozen = format!(
+            "No relay.json found at {} — run relayInit first, or set GRAPHIFY_RELAY_ROOT.",
+            dir.path().display()
+        );
         assert_eq!(p.relay_status().unwrap_err().to_string(), frozen);
         assert_eq!(
             p.relay_save(SaveArgs::default()).unwrap_err().to_string(),
             frozen
         );
         assert_eq!(p.relay_close(None, None).unwrap_err().to_string(), frozen);
+    }
+
+    /// D4（relay-remote-transport）1.2 e2e：workspace 路徑不存在 → 分層錯誤
+    /// `workspace path not found on this host: <p> (hostname: <h>)`，不再是
+    /// 模稜兩可的「未初始化」文案（gateway 拓撲除錯：需要看得出 host）。
+    #[test]
+    #[serial]
+    fn nonexistent_workspace_path_reports_host_and_path() {
+        let missing = tempdir().unwrap().path().join("gone").join("workspace");
+        let mut p = RelayPlugin::new();
+        p.bind_for_cli(&missing); // bind 自己不炸（容錯載入），工具呼叫才報錯
+        let err = p.relay_status().unwrap_err().to_string();
+        assert!(
+            err.starts_with("workspace path not found on this host: "),
+            "{err}"
+        );
+        assert!(err.contains(&missing.display().to_string()), "{err}");
+        let host = std::process::Command::new("hostname")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !host.is_empty() {
+            assert!(err.contains(&format!("(hostname: {host})")), "{err}");
+        }
+        // init 路徑同樣分層：不存在路徑不會抵達 init 寫入（workspace_root 回
+        // 該路徑本身，non-git → cwd；此處只驗證 status/save/close 錯誤文）。
+        let err2 = p.relay_save(SaveArgs::default()).unwrap_err().to_string();
+        assert_eq!(err2, err);
     }
 
     #[test]
