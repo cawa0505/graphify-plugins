@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-09-21
+goal: 實作 Argus Evidence Bridge，提供 evidence/decision/snapshot 產出與 Graphify 整合
