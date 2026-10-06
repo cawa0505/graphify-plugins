@@ -79,10 +79,9 @@ pub fn parse_lcov(text: &str) -> Result<CoverageData, CoverageParseError> {
                 ))
             })?;
             let hit_count: u64 = parts[1].trim().parse().map_err(|e| {
-                CoverageParseError::new(format!(
-                    "line {}: invalid hit count {parts:?}: {e}",
-                    i + 1,
-                ))
+                CoverageParseError::new(
+                    format!("line {}: invalid hit count {parts:?}: {e}", i + 1,),
+                )
             })?;
             current_lines.insert(line_num, hit_count);
         } else if line == "end_of_record" {
@@ -106,9 +105,8 @@ pub fn parse_lcov(text: &str) -> Result<CoverageData, CoverageParseError> {
 /// # Errors
 /// 回傳 `CoverageParseError` 於 JSON 格式不合預期時。
 pub fn parse_json(text: &str) -> Result<CoverageData, CoverageParseError> {
-    let payload: CoverageIngestPayload = serde_json::from_str(text).map_err(|e| {
-        CoverageParseError::new(format!("invalid JSON: {e}"))
-    })?;
+    let payload: CoverageIngestPayload = serde_json::from_str(text)
+        .map_err(|e| CoverageParseError::new(format!("invalid JSON: {e}")))?;
 
     let mut files: HashMap<String, HashMap<u32, u64>> = HashMap::new();
     for entry in payload.files {

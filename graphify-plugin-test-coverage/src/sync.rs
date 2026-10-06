@@ -64,9 +64,18 @@ fn escape_string(s: &str) -> String {
 pub fn emit_packet(workspace_key: &str, plugin_data: &serde_json::Value) -> String {
     let mut out = String::new();
     out.push_str("metadata:\n");
-    out.push_str(&format!("  format_version: {}\n", escape_string(FORMAT_VERSION)));
-    out.push_str(&format!("  workspace_key: {}\n", escape_string(workspace_key)));
-    out.push_str(&format!("  plugin_data: {}\n", escape_string(&plugin_data.to_string())));
+    out.push_str(&format!(
+        "  format_version: {}\n",
+        escape_string(FORMAT_VERSION)
+    ));
+    out.push_str(&format!(
+        "  workspace_key: {}\n",
+        escape_string(workspace_key)
+    ));
+    out.push_str(&format!(
+        "  plugin_data: {}\n",
+        escape_string(&plugin_data.to_string())
+    ));
     out
 }
 
@@ -91,8 +100,8 @@ pub fn build_coverage_plugin_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphify_core::types::{FileType, Node, NodeId};
     use graphify_core::to_toon;
+    use graphify_core::types::{FileType, Node, NodeId};
 
     fn node(id: &str, file: &str, start: usize, end: usize) -> Node {
         Node {

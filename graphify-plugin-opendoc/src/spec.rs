@@ -193,7 +193,10 @@ mod tests {
         let md = "## auth\n\nAuth module.\n\n# Symbol: crate::auth::login\n\n# Symbol: crate::auth::logout\n";
         let blocks = extract_blocks(md, DOC);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].symbols, vec!["crate::auth::login", "crate::auth::logout"]);
+        assert_eq!(
+            blocks[0].symbols,
+            vec!["crate::auth::login", "crate::auth::logout"]
+        );
     }
 
     #[test]
@@ -201,7 +204,10 @@ mod tests {
         let md = "# Symbol: orphan\n\n## verify_token\n\ncontent\n";
         let blocks = extract_blocks(md, DOC);
         assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].symbols.is_empty(), "orphan symbol should be dropped");
+        assert!(
+            blocks[0].symbols.is_empty(),
+            "orphan symbol should be dropped"
+        );
     }
 
     #[test]
@@ -209,7 +215,10 @@ mod tests {
         let md = "## verify_token\n\nExample:\n\n```\n# Symbol: fake\n```\n\nReal.\n";
         let blocks = extract_blocks(md, DOC);
         assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].symbols.is_empty(), "code-fence # Symbol: is not a heading");
+        assert!(
+            blocks[0].symbols.is_empty(),
+            "code-fence # Symbol: is not a heading"
+        );
     }
 
     #[test]
@@ -235,13 +244,17 @@ mod tests {
         let md2 = "## verify_token\n\nModified.\n";
         let b1 = extract_blocks(md1, DOC);
         let b2 = extract_blocks(md2, DOC);
-        assert_eq!(b1[0].spec_id, b2[0].spec_id, "spec_id is by heading, not content");
+        assert_eq!(
+            b1[0].spec_id, b2[0].spec_id,
+            "spec_id is by heading, not content"
+        );
         assert_ne!(b1[0].block_signature, b2[0].block_signature);
     }
 
     #[test]
     fn h1_title_then_h2_blocks() {
-        let md = "# Auth Module\n\nOverview.\n\n## verify_token\n\nContent.\n\n## get_user\n\nMore.\n";
+        let md =
+            "# Auth Module\n\nOverview.\n\n## verify_token\n\nContent.\n\n## get_user\n\nMore.\n";
         let blocks = extract_blocks(md, DOC);
         assert_eq!(blocks.len(), 3, "H1 title is also a block");
         assert_eq!(blocks[0].heading, "Auth Module");
@@ -261,7 +274,8 @@ mod tests {
 
     #[test]
     fn duplicate_symbol_deduplicated() {
-        let md = "## auth\n\nContent.\n\n# Symbol: crate::auth::login\n\n# Symbol: crate::auth::login\n";
+        let md =
+            "## auth\n\nContent.\n\n# Symbol: crate::auth::login\n\n# Symbol: crate::auth::login\n";
         let blocks = extract_blocks(md, DOC);
         assert_eq!(blocks[0].symbols, vec!["crate::auth::login"]);
     }

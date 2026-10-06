@@ -91,9 +91,18 @@ fn unescape_string(s: &str) -> String {
 pub fn emit_packet(workspace_key: &str, plugin_data: &serde_json::Value) -> String {
     let mut out = String::new();
     out.push_str("metadata:\n");
-    out.push_str(&format!("  format_version: {}\n", escape_string(FORMAT_VERSION)));
-    out.push_str(&format!("  workspace_key: {}\n", escape_string(workspace_key)));
-    out.push_str(&format!("  plugin_data: {}\n", escape_string(&plugin_data.to_string())));
+    out.push_str(&format!(
+        "  format_version: {}\n",
+        escape_string(FORMAT_VERSION)
+    ));
+    out.push_str(&format!(
+        "  workspace_key: {}\n",
+        escape_string(workspace_key)
+    ));
+    out.push_str(&format!(
+        "  plugin_data: {}\n",
+        escape_string(&plugin_data.to_string())
+    ));
     out
 }
 
@@ -101,7 +110,10 @@ pub fn emit_packet(workspace_key: &str, plugin_data: &serde_json::Value) -> Stri
 pub fn emit_error_packet(error: &str) -> String {
     let mut out = String::new();
     out.push_str("metadata:\n");
-    out.push_str(&format!("  format_version: {}\n", escape_string(FORMAT_VERSION)));
+    out.push_str(&format!(
+        "  format_version: {}\n",
+        escape_string(FORMAT_VERSION)
+    ));
     out.push_str(&format!("  error: {}\n", escape_string(error)));
     out
 }
@@ -171,7 +183,13 @@ mod tests {
 
     #[test]
     fn escape_roundtrip() {
-        let samples = ["plain", "with space", ".quote\"q\".", "colon: bracket[", "多語系\u{1F680}"];
+        let samples = [
+            "plain",
+            "with space",
+            ".quote\"q\".",
+            "colon: bracket[",
+            "多語系\u{1F680}",
+        ];
         for s in samples {
             assert_eq!(unescape_string(&escape_string(s)), s);
         }

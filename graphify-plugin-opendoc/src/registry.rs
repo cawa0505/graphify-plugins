@@ -57,7 +57,11 @@ impl LinkDb {
     ///
     /// # Errors
     /// SQLite DML 失敗時回傳 `rusqlite::Error`。
-    pub fn replace_links(&self, workspace_key: &str, rows: &[LinkRow]) -> Result<(), rusqlite::Error> {
+    pub fn replace_links(
+        &self,
+        workspace_key: &str,
+        rows: &[LinkRow],
+    ) -> Result<(), rusqlite::Error> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM opendoc_links WHERE workspace_key = ?1",
@@ -87,25 +91,26 @@ impl LinkDb {
     ///
     /// # Errors
     /// SQLite 失敗回傳 `rusqlite::Error`。
-    pub fn query_by_doc(&self, workspace_key: &str, doc_path: &str) -> Result<Vec<LinkRow>, rusqlite::Error> {
+    pub fn query_by_doc(
+        &self,
+        workspace_key: &str,
+        doc_path: &str,
+    ) -> Result<Vec<LinkRow>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT workspace_key, doc_path, spec_id, symbol, signature
              FROM opendoc_links
              WHERE workspace_key = ?1 AND doc_path = ?2
              ORDER BY spec_id, symbol",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![workspace_key, doc_path],
-            |row| {
-                Ok(LinkRow {
-                    workspace_key: row.get(0)?,
-                    doc_path: row.get(1)?,
-                    spec_id: row.get(2)?,
-                    symbol: row.get(3)?,
-                    signature: row.get(4)?,
-                })
-            },
-        )?;
+        let rows = stmt.query_map(rusqlite::params![workspace_key, doc_path], |row| {
+            Ok(LinkRow {
+                workspace_key: row.get(0)?,
+                doc_path: row.get(1)?,
+                spec_id: row.get(2)?,
+                symbol: row.get(3)?,
+                signature: row.get(4)?,
+            })
+        })?;
         rows.collect::<Result<_, _>>()
     }
 
@@ -124,18 +129,15 @@ impl LinkDb {
              WHERE workspace_key = ?1 AND symbol = ?2
              ORDER BY doc_path",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![workspace_key, symbol],
-            |row| {
-                Ok(LinkRow {
-                    workspace_key: row.get(0)?,
-                    doc_path: row.get(1)?,
-                    spec_id: row.get(2)?,
-                    symbol: row.get(3)?,
-                    signature: row.get(4)?,
-                })
-            },
-        )?;
+        let rows = stmt.query_map(rusqlite::params![workspace_key, symbol], |row| {
+            Ok(LinkRow {
+                workspace_key: row.get(0)?,
+                doc_path: row.get(1)?,
+                spec_id: row.get(2)?,
+                symbol: row.get(3)?,
+                signature: row.get(4)?,
+            })
+        })?;
         rows.collect::<Result<_, _>>()
     }
 

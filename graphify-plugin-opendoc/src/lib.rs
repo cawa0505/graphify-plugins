@@ -10,9 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use graphify_core::plugin::{
-    GraphUpdateEvent, GraphifyPlugin, WorkspaceContext,
-};
+use graphify_core::plugin::{GraphUpdateEvent, GraphifyPlugin, WorkspaceContext};
 use thiserror::Error;
 
 pub mod backend;
@@ -23,7 +21,7 @@ pub mod spec;
 pub mod sync;
 
 pub use backend::{NoOpBackend, RestBackend, SearchHit, SpecSearchBackend};
-pub use links::{LinkRow, discover_doc_paths, index_docs as extract_link_rows};
+pub use links::{discover_doc_paths, index_docs as extract_link_rows, LinkRow};
 pub use registry::LinkDb;
 pub use spec::SpecBlock;
 
@@ -107,7 +105,8 @@ impl OpendocPlugin {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "workspace".to_string());
-        let ctx = WorkspaceContext::new(workspace_key, name, cwd_ref.to_string_lossy().into_owned());
+        let ctx =
+            WorkspaceContext::new(workspace_key, name, cwd_ref.to_string_lossy().into_owned());
         self.bind(ctx);
         self
     }
@@ -123,9 +122,7 @@ impl OpendocPlugin {
     }
 
     fn backend(&self) -> &dyn SpecSearchBackend {
-        self.backend
-            .as_deref()
-            .unwrap_or(&NOOP_BEACON_REF)
+        self.backend.as_deref().unwrap_or(&NOOP_BEACON_REF)
     }
 
     // ── 業務 API ──────────────────────────────────────────────────────────
@@ -241,10 +238,7 @@ impl OpendocPlugin {
     ///
     /// `known_symbols` 由 caller 透過 graphify-core 的 graph 查詢供給
     /// （plugin 本身不持有 graph handle——v1 契約）。
-    pub fn audit_code_missing(
-        &self,
-        known_symbols: &[String],
-    ) -> Result<Vec<DriftItem>, Error> {
+    pub fn audit_code_missing(&self, known_symbols: &[String]) -> Result<Vec<DriftItem>, Error> {
         let ctx = self.require_ctx()?;
         let db = LinkDb::open(&self.registry_path())?;
         let all = db.all_links(&ctx.workspace_key)?;
@@ -561,7 +555,9 @@ mod tests {
         );
         let p = make_plugin(&dir);
         p.index_all_docs().unwrap();
-        let missing = p.audit_code_missing(&["crate::auth::verify_token".to_string()]).unwrap();
+        let missing = p
+            .audit_code_missing(&["crate::auth::verify_token".to_string()])
+            .unwrap();
         assert!(missing.is_empty());
     }
 
@@ -608,7 +604,10 @@ mod tests {
         let bytes = p.sync_toon(None);
         let s = String::from_utf8(bytes).unwrap();
         // packet embeds JSON in YAML (escaped quotes), so check the unescaped keyword.
-        assert!(s.contains("link_count"), "missing link_count in packet: {s}");
+        assert!(
+            s.contains("link_count"),
+            "missing link_count in packet: {s}"
+        );
     }
 
     // ── P1 對映：Layer 2 hit 的 spec_id 必須落於 Layer 1 命名空間 ──────

@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 /// 一筆覆蓋率綁定（coverage_bindings 列）。
 #[derive(Debug, Clone, PartialEq)]
@@ -182,13 +182,12 @@ impl CoverageDb {
     /// # Errors
     /// SQLite 查詢失敗時回傳 `rusqlite::Error`。
     pub fn avg_line_rate(&self, workspace_key: &str) -> Result<f64, rusqlite::Error> {
-        self.conn
-            .query_row(
-                "SELECT COALESCE(AVG(line_rate), 0.0) FROM coverage_bindings
+        self.conn.query_row(
+            "SELECT COALESCE(AVG(line_rate), 0.0) FROM coverage_bindings
                  WHERE workspace_key = ?1 AND canonical_node_id NOT LIKE 'file:%'",
-                params![workspace_key],
-                |r| r.get(0),
-            )
+            params![workspace_key],
+            |r| r.get(0),
+        )
     }
 }
 
@@ -245,10 +244,12 @@ mod tests {
     fn snapshot_replace_clears_old_data() {
         let (_d, db) = open_tmp();
         let ws = "w-1";
-        db.snapshot_replace(ws, &[binding(ws, "n1", 0.9)], "now").unwrap();
+        db.snapshot_replace(ws, &[binding(ws, "n1", 0.9)], "now")
+            .unwrap();
         assert_eq!(db.count(ws).unwrap(), 1);
         // 第二次 replace → 舊資料清除
-        db.snapshot_replace(ws, &[binding(ws, "n2", 0.0)], "now").unwrap();
+        db.snapshot_replace(ws, &[binding(ws, "n2", 0.0)], "now")
+            .unwrap();
         assert_eq!(db.count(ws).unwrap(), 1, "old data cleared");
         assert!(db.query_by_node(ws, "n1").unwrap().is_none(), "n1 gone");
         assert!(db.query_by_node(ws, "n2").unwrap().is_some());
@@ -257,8 +258,10 @@ mod tests {
     #[test]
     fn workspace_isolation() {
         let (_d, db) = open_tmp();
-        db.snapshot_replace("w1", &[binding("w1", "n", 0.0)], "now").unwrap();
-        db.snapshot_replace("w2", &[binding("w2", "n", 0.0)], "now").unwrap();
+        db.snapshot_replace("w1", &[binding("w1", "n", 0.0)], "now")
+            .unwrap();
+        db.snapshot_replace("w2", &[binding("w2", "n", 0.0)], "now")
+            .unwrap();
         assert_eq!(db.count("w1").unwrap(), 1);
         assert_eq!(db.count("w2").unwrap(), 1);
     }
@@ -267,12 +270,17 @@ mod tests {
     fn query_blindspots_returns_only_under_50() {
         let (_d, db) = open_tmp();
         let ws = "w-1";
-        db.snapshot_replace(ws, &[
-            binding(ws, "n1", 0.0),
-            binding(ws, "n2", 0.3),
-            binding(ws, "n3", 0.5),  // 邊界：0.5 不是盲區
-            binding(ws, "n4", 0.8),
-        ], "now").unwrap();
+        db.snapshot_replace(
+            ws,
+            &[
+                binding(ws, "n1", 0.0),
+                binding(ws, "n2", 0.3),
+                binding(ws, "n3", 0.5), // 邊界：0.5 不是盲區
+                binding(ws, "n4", 0.8),
+            ],
+            "now",
+        )
+        .unwrap();
         let spots = db.query_blindspots(ws).unwrap();
         assert_eq!(spots.len(), 2, "n1 + n2 are blindspots");
         assert!(spots.iter().all(|b| b.is_blindspot));
@@ -282,11 +290,16 @@ mod tests {
     fn avg_line_rate_computation() {
         let (_d, db) = open_tmp();
         let ws = "w-1";
-        db.snapshot_replace(ws, &[
-            binding(ws, "n1", 1.0),
-            binding(ws, "n2", 0.5),
-            binding(ws, "n3", 0.0),
-        ], "now").unwrap();
+        db.snapshot_replace(
+            ws,
+            &[
+                binding(ws, "n1", 1.0),
+                binding(ws, "n2", 0.5),
+                binding(ws, "n3", 0.0),
+            ],
+            "now",
+        )
+        .unwrap();
         let avg = db.avg_line_rate(ws).unwrap();
         assert!((avg - 0.5).abs() < 0.001);
     }

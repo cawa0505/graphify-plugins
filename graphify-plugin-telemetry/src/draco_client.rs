@@ -39,8 +39,7 @@ pub const DRACO_TOOLS: [&str; 1] = ["fetch_top_hotspots"];
 /// MCP server 部署後修正。
 #[must_use]
 pub fn default_draco_url() -> String {
-    std::env::var("DRACO_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9876/mcp".to_string())
+    std::env::var("DRACO_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:9876/mcp".to_string())
 }
 
 /// Draco `fetch_top_hotspots` 單一熱點（契約 v1）。
@@ -199,10 +198,7 @@ impl DracoMcpClient {
     /// 網路/HTTP 失敗回傳 [`ureq::Error`]；`session_id` 未初始化回傳
     /// [`DracoError::NotInitialized`]。
     pub fn call_tool(&mut self, name: &str, args: &Value) -> Result<String, DracoError> {
-        let session = self
-            .session_id
-            .clone()
-            .ok_or(DracoError::NotInitialized)?;
+        let session = self.session_id.clone().ok_or(DracoError::NotInitialized)?;
         let body = Self::call_tool_request(2, name, args);
         let resp = ureq::post(&self.base_url)
             .set("Content-Type", "application/json")
@@ -245,7 +241,10 @@ mod tests {
         let v = DracoMcpClient::initialize_request();
         assert_eq!(v["method"], "initialize");
         assert_eq!(v["params"]["protocolVersion"], "2025-03-26");
-        assert_eq!(v["params"]["clientInfo"]["name"], "graphify-plugin-telemetry");
+        assert_eq!(
+            v["params"]["clientInfo"]["name"],
+            "graphify-plugin-telemetry"
+        );
     }
 
     #[test]
@@ -362,8 +361,7 @@ mod tests {
             }
         });
 
-        let mut client =
-            DracoMcpClient::new(format!("http://{addr}/mcp"));
+        let mut client = DracoMcpClient::new(format!("http://{addr}/mcp"));
         let hotspots = client.fetch_top_hotspots(Some(10)).unwrap();
         assert_eq!(hotspots.len(), 1);
         assert_eq!(hotspots[0].function_name, "query_users");

@@ -267,8 +267,12 @@ mod tests {
     #[test]
     fn upsert_and_query_by_node() {
         let (_d, db) = open_tmp();
-        db.upsert(&binding("w-1", "tel-1", "src/db/query.rs:function:query_users"))
-            .unwrap();
+        db.upsert(&binding(
+            "w-1",
+            "tel-1",
+            "src/db/query.rs:function:query_users",
+        ))
+        .unwrap();
         let rows = db
             .query_by_node("w-1", "src/db/query.rs:function:query_users")
             .unwrap();

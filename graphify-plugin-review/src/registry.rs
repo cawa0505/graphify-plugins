@@ -114,9 +114,18 @@ impl ReviewDb {
             .filter_map(Result::ok)
             .collect();
         for (col, ddl) in [
-            ("resolution_reason", "ALTER TABLE review_bindings ADD COLUMN resolution_reason TEXT NOT NULL DEFAULT ''"),
-            ("resolved_at",       "ALTER TABLE review_bindings ADD COLUMN resolved_at       TEXT NOT NULL DEFAULT ''"),
-            ("resolved_by",       "ALTER TABLE review_bindings ADD COLUMN resolved_by       TEXT NOT NULL DEFAULT ''"),
+            (
+                "resolution_reason",
+                "ALTER TABLE review_bindings ADD COLUMN resolution_reason TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "resolved_at",
+                "ALTER TABLE review_bindings ADD COLUMN resolved_at       TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "resolved_by",
+                "ALTER TABLE review_bindings ADD COLUMN resolved_by       TEXT NOT NULL DEFAULT ''",
+            ),
         ] {
             if !cols.iter().any(|c| c == col) {
                 conn.execute_batch(ddl)?;
@@ -391,8 +400,12 @@ mod tests {
     #[test]
     fn upsert_and_query_by_node() {
         let (_d, db) = open_tmp();
-        db.upsert(&binding("w-1", "crg-1", "src/auth.rs:function:verify_token"))
-            .unwrap();
+        db.upsert(&binding(
+            "w-1",
+            "crg-1",
+            "src/auth.rs:function:verify_token",
+        ))
+        .unwrap();
         let rows = db
             .query_by_node("w-1", "src/auth.rs:function:verify_token")
             .unwrap();
@@ -441,7 +454,14 @@ mod tests {
         assert_eq!(un.len(), 0, "dismissed is not unresolved");
 
         let n = db
-            .resolve("w-1", "crg-1", "2026-08-11T00:00:00Z", "manual", "reviewed & fixed", "2026-08-11T00:00:00Z")
+            .resolve(
+                "w-1",
+                "crg-1",
+                "2026-08-11T00:00:00Z",
+                "manual",
+                "reviewed & fixed",
+                "2026-08-11T00:00:00Z",
+            )
             .unwrap();
         assert_eq!(n, 1);
         let row = db.get("w-1", "crg-1").unwrap().unwrap();
@@ -494,7 +514,10 @@ mod tests {
         let db = ReviewDb::open(&path).unwrap();
         let row = db.get("w-1", "crg-old").unwrap().unwrap();
         assert_eq!(row.status, "unresolved");
-        assert_eq!(row.resolution_reason, "", "old rows get empty reason after migration");
+        assert_eq!(
+            row.resolution_reason, "",
+            "old rows get empty reason after migration"
+        );
         assert_eq!(row.resolved_by, "");
 
         // 再開一次 → idempotent（migration 不炸、資料仍在）

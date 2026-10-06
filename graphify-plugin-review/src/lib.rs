@@ -110,11 +110,8 @@ impl ReviewPlugin {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "workspace".to_string());
-        let ctx = WorkspaceContext::new(
-            workspace_key,
-            name,
-            cwd_ref.to_string_lossy().into_owned(),
-        );
+        let ctx =
+            WorkspaceContext::new(workspace_key, name, cwd_ref.to_string_lossy().into_owned());
         self.bind(ctx);
         self
     }
@@ -138,8 +135,7 @@ impl ReviewPlugin {
     /// 以快取的 GraphOutput 執行 line→symbol 升維。
     #[must_use]
     pub fn resolve(&self, file_path: &str, line: u32) -> Option<resolver::Resolved> {
-        self.graph()
-            .and_then(|g| resolve_line(&g, file_path, line))
+        self.graph().and_then(|g| resolve_line(&g, file_path, line))
     }
 
     // ---- 業務 API（graphify-mcp auto-register 對應的工具）----
@@ -325,8 +321,7 @@ impl ReviewPlugin {
 /// `http://127.0.0.1:8080/mcp`，loopback 範例端口，對齊 crg-requirements.md）。
 #[must_use]
 pub fn default_crg_url() -> String {
-    std::env::var("CRG_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080/mcp".to_string())
+    std::env::var("CRG_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/mcp".to_string())
 }
 
 /// risk_score（0.0-1.0）→ severity 對映（crg-requirements.md §5）。
@@ -383,7 +378,9 @@ impl GraphifyPlugin for ReviewPlugin {
                         let summary = self.summary_json();
                         emit_packet(&self.workspace_key, &summary).into_bytes()
                     }
-                    Err(_) => emit_error_packet("Cannot parse .toon into GraphOutput.").into_bytes(),
+                    Err(_) => {
+                        emit_error_packet("Cannot parse .toon into GraphOutput.").into_bytes()
+                    }
                 }
             }
             // 主動 sync：無圖可收，仍可回應 workspace 狀態摘要。
@@ -467,7 +464,11 @@ impl ReviewPlugin {
     /// ponytail: mcp 兩處 hook 目前都傳空 modified_nodes，diff 是唯一能讓
     /// impact guard 在真實路徑觸發的種子來源；若日後 host 開始傳真實
     /// modified_nodes，diff 分支自然不再被走到，但保留作為 fallback。
-    fn impact_seeds(&self, graph: &GraphOutput, event: &GraphUpdateEvent) -> Vec<graphify_core::NodeId> {
+    fn impact_seeds(
+        &self,
+        graph: &GraphOutput,
+        event: &GraphUpdateEvent,
+    ) -> Vec<graphify_core::NodeId> {
         if !event.modified_nodes.is_empty() {
             return event.modified_nodes.clone();
         }
@@ -568,9 +569,7 @@ mod tests {
         // 先餵一張圖進快取（auth.rs 42 行在 verify_token 內）
         let toon = graphify_core::to_toon(&GraphOutput {
             nodes: vec![graphify_core::Node {
-                id: graphify_core::NodeId(
-                    "src/auth.rs:function:verify_token".to_string(),
-                ),
+                id: graphify_core::NodeId("src/auth.rs:function:verify_token".to_string()),
                 label: "verify_token".to_string(),
                 file_type: graphify_core::FileType::Code,
                 kind: "function".to_string(),
@@ -665,13 +664,15 @@ mod tests {
         };
         p.review_ingest(&payload).unwrap();
 
-        assert!(p
-            .review_resolve("w-1", "crg-003", "manual", "")
-            .unwrap());
+        assert!(p.review_resolve("w-1", "crg-003", "manual", "").unwrap());
         assert!(!p.review_resolve("w-1", "nope", "manual", "").unwrap());
 
         let (_, rows) = p.review_get_context("w-1", "", true).unwrap();
-        assert_eq!(rows.len(), 0, "resolved reviews no longer surface as unresolved");
+        assert_eq!(
+            rows.len(),
+            0,
+            "resolved reviews no longer surface as unresolved"
+        );
     }
 
     /// 假 CRG server：對 `initialize` 回 `Mcp-Session-Id` header，對
@@ -709,11 +710,8 @@ mod tests {
                         Ok(0) => break,
                         Ok(n) => {
                             all.extend_from_slice(&chunk[..n]);
-                            if let Some(hdr_end) =
-                                all.windows(4).position(|w| w == b"\r\n\r\n")
-                            {
-                                let head =
-                                    String::from_utf8_lossy(&all[..hdr_end]);
+                            if let Some(hdr_end) = all.windows(4).position(|w| w == b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&all[..hdr_end]);
                                 let clen: usize = head
                                     .lines()
                                     .find_map(|l| {
@@ -769,8 +767,7 @@ mod tests {
             .with_crg_url(url);
         p.bind(WorkspaceContext::new("w-1", "ws", "/tmp/ws"));
         // graph 快取：src/auth.rs:function:verify_token 涵蓋 line 42
-        let toon =
-            graphify_core::to_toon(&node_graph("src/auth.rs:function:verify_token"));
+        let toon = graphify_core::to_toon(&node_graph("src/auth.rs:function:verify_token"));
         p.sync_toon(Some(toon.into_bytes()));
 
         // search → 回實際綁定的 node ids（不再只回計數）
@@ -782,9 +779,7 @@ mod tests {
         );
 
         // round-trip：用回傳的 node id 讀回綁定
-        let (node, rows) = p
-            .review_get_context("w-1", &node_ids[0], true)
-            .unwrap();
+        let (node, rows) = p.review_get_context("w-1", &node_ids[0], true).unwrap();
         assert_eq!(node, "src/auth.rs:function:verify_token");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "crg-src/auth.rs:42:verify_token");
@@ -875,8 +870,9 @@ mod tests {
         assert_eq!((bound, orphan), (1, 0));
 
         // 圖 v2：節點改名（函數 rename）→ 舊 Node.id 消失
-        let toon2 =
-            graphify_core::to_toon(&node_graph("src/auth.rs:function:verify_authentication_token"));
+        let toon2 = graphify_core::to_toon(&node_graph(
+            "src/auth.rs:function:verify_authentication_token",
+        ));
         p.sync_toon(Some(toon2.into_bytes()));
 
         // on_graph_updated → presence diff → 自動銷案
@@ -892,7 +888,10 @@ mod tests {
             .unwrap();
         assert!(rows.is_empty(), "drifted binding auto-resolved");
         let (_, orphan_rows) = p.review_get_context("w-1", "", true).unwrap();
-        assert!(orphan_rows.is_empty(), "no orphan leakage from auto-resolve");
+        assert!(
+            orphan_rows.is_empty(),
+            "no orphan leakage from auto-resolve"
+        );
     }
 
     #[test]
@@ -997,7 +996,10 @@ mod tests {
         p.bind(WorkspaceContext::new("w-1", "ws", "/tmp/ws"));
         let out = p.sync_toon(Some(b"not-a-toon".to_vec()));
         let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("workspace_key"), "summary packet expected: {text}");
+        assert!(
+            text.contains("workspace_key"),
+            "summary packet expected: {text}"
+        );
         let g = p.graph().expect("garbage toon caches an empty graph");
         assert!(g.nodes.is_empty());
     }
@@ -1076,7 +1078,10 @@ mod tests {
             Vec::new(),
             graphify_core::GraphUpdateKind::Indexed,
         ));
-        assert!(alerts.lock().expect("alerts lock").is_empty(), "baseline: no alert");
+        assert!(
+            alerts.lock().expect("alerts lock").is_empty(),
+            "baseline: no alert"
+        );
 
         // 圖 v2：新 caller 出現（main2 → calls → verify_token）→ 種子變動
         let toon2 = graphify_core::to_toon(&caller_graph(
@@ -1095,7 +1100,9 @@ mod tests {
         let alert = got.first().expect("alert");
         assert_eq!(alert["max_severity"], "critical");
         assert!(
-            serde_json::to_string(alert).unwrap().contains("verify_token"),
+            serde_json::to_string(alert)
+                .unwrap()
+                .contains("verify_token"),
             "impacted node must be in payload: {alert}"
         );
     }

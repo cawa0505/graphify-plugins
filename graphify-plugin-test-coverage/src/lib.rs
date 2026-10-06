@@ -11,7 +11,7 @@ use std::sync::RwLock;
 use graphify_core::plugin::{GraphUpdateEvent, GraphifyPlugin, WorkspaceContext};
 use graphify_core::types::GraphOutput;
 
-use crate::ingest::{CoverageParseError, parse_json, parse_lcov};
+use crate::ingest::{parse_json, parse_lcov, CoverageParseError};
 use crate::registry::CoverageDb;
 use crate::resolver::resolve_coverage;
 use crate::sync::{build_coverage_plugin_data, emit_packet, parse_graph};
@@ -79,11 +79,8 @@ impl CoveragePlugin {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "workspace".to_string());
-        let ctx = WorkspaceContext::new(
-            workspace_key,
-            name,
-            cwd_ref.to_string_lossy().into_owned(),
-        );
+        let ctx =
+            WorkspaceContext::new(workspace_key, name, cwd_ref.to_string_lossy().into_owned());
         self.bind(ctx);
         self
     }
@@ -153,7 +150,10 @@ impl CoveragePlugin {
         let total_lines: i64 = bindings.iter().map(|b| b.total_lines).sum();
         let covered_lines: i64 = bindings.iter().map(|b| b.covered_lines).sum();
         let blindspots = bindings.iter().filter(|b| b.is_blindspot).count();
-        let bound_nodes = bindings.iter().filter(|b| !b.canonical_node_id.is_empty()).count();
+        let bound_nodes = bindings
+            .iter()
+            .filter(|b| !b.canonical_node_id.is_empty())
+            .count();
 
         Ok(CoverageSummary {
             bound_nodes,
@@ -201,10 +201,7 @@ impl GraphifyPlugin for CoveragePlugin {
 }
 
 /// 從 DB 查詢並合成 plugin_data 摘要 JSON。
-fn coverage_summary_json(
-    workspace_key: &str,
-    db: &Option<CoverageDb>,
-) -> serde_json::Value {
+fn coverage_summary_json(workspace_key: &str, db: &Option<CoverageDb>) -> serde_json::Value {
     match db {
         Some(db) => {
             let total = db.count(workspace_key).unwrap_or(0);
@@ -212,9 +209,7 @@ fn coverage_summary_json(
             let avg = db.avg_line_rate(workspace_key).unwrap_or(0.0);
             build_coverage_plugin_data(workspace_key, total, spots, avg)
         }
-        None => {
-            build_coverage_plugin_data(workspace_key, 0, 0, 0.0)
-        }
+        None => build_coverage_plugin_data(workspace_key, 0, 0, 0.0),
     }
 }
 
@@ -280,21 +275,19 @@ mod tests {
 
     fn make_graph() -> GraphOutput {
         GraphOutput {
-            nodes: vec![
-                Node {
-                    id: NodeId("src/a.rs:function:f".to_string()),
-                    label: "f".to_string(),
-                    file_type: FileType::Code,
-                    kind: "function".to_string(),
-                    language: "rust".to_string(),
-                    source_file: "src/a.rs".to_string(),
-                    start_line: 1,
-                    end_line: 10,
-                    doc_comment: None,
-                    description: None,
-                    metadata: None,
-                },
-            ],
+            nodes: vec![Node {
+                id: NodeId("src/a.rs:function:f".to_string()),
+                label: "f".to_string(),
+                file_type: FileType::Code,
+                kind: "function".to_string(),
+                language: "rust".to_string(),
+                source_file: "src/a.rs".to_string(),
+                start_line: 1,
+                end_line: 10,
+                doc_comment: None,
+                description: None,
+                metadata: None,
+            }],
             edges: Vec::new(),
             metadata: Default::default(),
         }
@@ -303,8 +296,7 @@ mod tests {
     fn plugin_with_tmp_db() -> (tempfile::TempDir, CoveragePlugin) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("graphify.db");
-        let p = CoveragePlugin::new()
-            .with_registry_path(db_path);
+        let p = CoveragePlugin::new().with_registry_path(db_path);
         (dir, p)
     }
 
@@ -353,7 +345,10 @@ mod tests {
         assert_eq!(summary.blindspots, 0);
 
         let db = p.db().unwrap();
-        let binding = db.query_by_node("w-1", "src/a.rs:function:f").unwrap().unwrap();
+        let binding = db
+            .query_by_node("w-1", "src/a.rs:function:f")
+            .unwrap()
+            .unwrap();
         assert!((binding.line_rate - 2.0 / 3.0).abs() < 0.001);
     }
 

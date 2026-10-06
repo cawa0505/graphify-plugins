@@ -119,7 +119,10 @@ mod tests {
         // 127.0.0.1:1 在 Linux 一定拒絕連線（權限/未綁定）。
         let backend = RestBackend::new("http://127.0.0.1:1");
         let hits = backend.search("any_ws", "any query");
-        assert!(hits.is_empty(), "unreachable OD should yield empty hits, not panic");
+        assert!(
+            hits.is_empty(),
+            "unreachable OD should yield empty hits, not panic"
+        );
     }
 
     #[test]
@@ -142,7 +145,8 @@ mod tests {
 
     #[test]
     fn rest_backend_parses_missing_heading_as_none() {
-        let json = r#"{"hits":[{"doc_path":"docs/x.md","spec_id":"s","score":0.5,"snippet":"..."}]}"#;
+        let json =
+            r#"{"hits":[{"doc_path":"docs/x.md","spec_id":"s","score":0.5,"snippet":"..."}]}"#;
         let parsed: OdSearchResponse = serde_json::from_str(json).expect("missing heading");
         assert_eq!(parsed.hits[0].heading, None);
     }

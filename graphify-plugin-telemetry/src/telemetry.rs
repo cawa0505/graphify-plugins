@@ -177,8 +177,7 @@ impl TelemetryService {
     /// 以快取的 GraphOutput 執行 line→symbol 升維。
     #[must_use]
     pub fn resolve(&self, file_path: &str, line: u32) -> Option<crate::resolver::Resolved> {
-        self.graph()
-            .and_then(|g| resolve_line(&g, file_path, line))
+        self.graph().and_then(|g| resolve_line(&g, file_path, line))
     }
 
     // ---- 業務 API（graphify-mcp auto-register 對應的工具）----
@@ -230,7 +229,9 @@ impl TelemetryService {
                 bound += 1;
             }
 
-            let hot = self.threshold.is_hotspot(metric.p99_ms, metric.alloc_bytes_per_req);
+            let hot = self
+                .threshold
+                .is_hotspot(metric.p99_ms, metric.alloc_bytes_per_req);
             if hot {
                 hotspots += 1;
             }
@@ -384,7 +385,9 @@ impl TelemetryService {
                         *self.graph_cache.write().unwrap() = Some(graph);
                         emit_packet(&self.workspace_key, &self.summary_json()).into_bytes()
                     }
-                    Err(_) => emit_error_packet("Cannot parse .toon into GraphOutput.").into_bytes(),
+                    Err(_) => {
+                        emit_error_packet("Cannot parse .toon into GraphOutput.").into_bytes()
+                    }
                 }
             }
             None => emit_packet(&self.workspace_key, &self.summary_json()).into_bytes(),
@@ -425,9 +428,7 @@ mod tests {
     fn feed_graph(svc: &TelemetryService) {
         let toon = graphify_core::to_toon(&GraphOutput {
             nodes: vec![graphify_core::Node {
-                id: graphify_core::NodeId(
-                    "src/db/query.rs:function:query_users".to_string(),
-                ),
+                id: graphify_core::NodeId("src/db/query.rs:function:query_users".to_string()),
                 label: "query_users".to_string(),
                 file_type: graphify_core::FileType::Code,
                 kind: "function".to_string(),
@@ -479,10 +480,16 @@ mod tests {
         assert!(def.is_hotspot(501.0, 1024), "p99 over 500ms");
         assert!(!def.is_hotspot(500.0, 1024), "p99 must exceed 500ms");
         assert!(def.is_hotspot(100.0, 5 * 1024 * 1024 + 1), "alloc over 5MB");
-        assert!(!def.is_hotspot(100.0, 5 * 1024 * 1024), "alloc must exceed 5MB");
+        assert!(
+            !def.is_hotspot(100.0, 5 * 1024 * 1024),
+            "alloc must exceed 5MB"
+        );
 
         // 自訂門檻（動態設定可覆寫）。
-        let custom = ThresholdConfig { p99_ms: 1000.0, alloc_bytes: 1024 };
+        let custom = ThresholdConfig {
+            p99_ms: 1000.0,
+            alloc_bytes: 1024,
+        };
         assert!(!custom.is_hotspot(600.0, 1024), "600ms 低於自訂 1000ms");
         assert!(custom.is_hotspot(100.0, 2048), "alloc 超過自訂 1KB");
     }
@@ -490,7 +497,10 @@ mod tests {
     #[test]
     fn ingest_respects_custom_threshold() {
         let (_d, mut svc) = service_with_tmp_db();
-        svc = svc.with_threshold(ThresholdConfig { p99_ms: 1000.0, alloc_bytes: 1024 });
+        svc = svc.with_threshold(ThresholdConfig {
+            p99_ms: 1000.0,
+            alloc_bytes: 1024,
+        });
         feed_graph(&svc);
         // 600ms：低於自訂 1000ms → 非 hotspot。
         let report = svc
@@ -498,7 +508,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             report,
-            IngestReport { total: 1, bound: 1, orphan: 0, hotspots: 0 }
+            IngestReport {
+                total: 1,
+                bound: 1,
+                orphan: 0,
+                hotspots: 0
+            }
         );
         // 2KB alloc：超過自訂 1KB → hotspot。
         let report = svc
@@ -506,7 +521,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             report,
-            IngestReport { total: 1, bound: 1, orphan: 0, hotspots: 1 }
+            IngestReport {
+                total: 1,
+                bound: 1,
+                orphan: 0,
+                hotspots: 1
+            }
         );
     }
 
@@ -514,7 +534,8 @@ mod tests {
     fn ingest_binds_and_queries_context() {
         let (_d, svc) = service_with_tmp_db();
         feed_graph(&svc);
-        let report = svc.telemetry_ingest(&payload("w-1", vec![metric("tel-1", 1250.0, 1024)]))
+        let report = svc
+            .telemetry_ingest(&payload("w-1", vec![metric("tel-1", 1250.0, 1024)]))
             .unwrap();
         assert_eq!(
             report,
@@ -555,8 +576,11 @@ mod tests {
         let (_d, mut svc) = service_with_tmp_db();
         svc.set_workspace_key("w-1".to_string());
         feed_graph(&svc);
-        svc.telemetry_ingest(&payload("w-1", vec![metric("tel-3", 2450.0, 1024 * 1024 * 15)]))
-            .unwrap();
+        svc.telemetry_ingest(&payload(
+            "w-1",
+            vec![metric("tel-3", 2450.0, 1024 * 1024 * 15)],
+        ))
+        .unwrap();
         let summary = svc.summary_json();
         let block = summary["telemetry"]["toon_block"].as_str().unwrap();
         assert!(block.contains("[src/db/query.rs:function:query_users (AST Node)]"));
@@ -592,7 +616,10 @@ mod tests {
         let (_d, svc) = service_with_tmp_db();
         let out = svc.sync_toon(Some(b"not-a-toon".to_vec()));
         let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("workspace_key"), "summary packet expected: {text}");
+        assert!(
+            text.contains("workspace_key"),
+            "summary packet expected: {text}"
+        );
         let g = svc.graph().expect("garbage toon caches an empty graph");
         assert!(g.nodes.is_empty());
     }

@@ -76,11 +76,8 @@ impl TelemetryPlugin {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "workspace".to_string());
-        let ctx = WorkspaceContext::new(
-            workspace_key,
-            name,
-            cwd_ref.to_string_lossy().into_owned(),
-        );
+        let ctx =
+            WorkspaceContext::new(workspace_key, name, cwd_ref.to_string_lossy().into_owned());
         self.bind(ctx);
         self
     }
@@ -215,9 +212,7 @@ mod tests {
         // 先餵一張圖進快取（query.rs 88 行在 query_users 內）
         let toon = graphify_core::to_toon(&GraphOutput {
             nodes: vec![graphify_core::Node {
-                id: graphify_core::NodeId(
-                    "src/db/query.rs:function:query_users".to_string(),
-                ),
+                id: graphify_core::NodeId("src/db/query.rs:function:query_users".to_string()),
                 label: "query_users".to_string(),
                 file_type: graphify_core::FileType::Code,
                 kind: "function".to_string(),

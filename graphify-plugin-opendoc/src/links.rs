@@ -26,11 +26,7 @@ pub struct LinkRow {
 /// # 性價比
 /// I/O 一次讀檔；每個 block 的 hash 為 O(file_size)。對數百 doc 的
 /// 專案仍遠快於向量檢索。
-pub fn index_docs(
-    root: &Path,
-    doc_paths: &[String],
-    workspace_key: &str,
-) -> Vec<LinkRow> {
+pub fn index_docs(root: &Path, doc_paths: &[String], workspace_key: &str) -> Vec<LinkRow> {
     let mut rows = Vec::new();
     for rel in doc_paths {
         let full = root.join(rel);

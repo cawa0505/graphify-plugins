@@ -114,7 +114,11 @@ mod tests {
     fn parse_payload_file_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reviews.json");
-        std::fs::write(&path, r#"{"version":"1.0","workspace_key":"w","reviews":[]}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"version":"1.0","workspace_key":"w","reviews":[]}"#,
+        )
+        .unwrap();
         let payload = parse_payload_file(&path).unwrap();
         assert_eq!(payload.workspace_key, "w");
     }

@@ -124,15 +124,8 @@ impl CrgMcpClient {
     /// # Errors
     /// 網路/HTTP 失敗回傳 [`ureq::Error`]；`session_id` 未初始化回傳
     /// [`CrgError::NotInitialized`]。
-    pub fn call_tool(
-        &mut self,
-        name: &str,
-        args: &Value,
-    ) -> Result<String, CrgError> {
-        let session = self
-            .session_id
-            .clone()
-            .ok_or(CrgError::NotInitialized)?;
+    pub fn call_tool(&mut self, name: &str, args: &Value) -> Result<String, CrgError> {
+        let session = self.session_id.clone().ok_or(CrgError::NotInitialized)?;
         let body = Self::call_tool_request(2, name, args);
         let resp = ureq::post(&self.base_url)
             .set("Content-Type", "application/json")
@@ -165,8 +158,7 @@ impl CrgMcpClient {
         }
         let text = self.call_tool("detect_changes_tool", &args)?;
         // text content 是 JSON 字串（實測：structuredContent 與 text 同源）。
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|e| CrgError::Parse(e.to_string()))?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| CrgError::Parse(e.to_string()))?;
         let priorities = v
             .get("review_priorities")
             .and_then(Value::as_array)

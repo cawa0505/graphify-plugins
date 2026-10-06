@@ -24,11 +24,7 @@ pub struct Resolved {
 /// 比對時先試精確比對，再試「以 / 分隔路徑的 suffix 相符」以容忍前綴差異。
 /// 回傳 `None` = 檔案不存在於 graph 或行號超出所有節點（orphan line）。
 #[must_use]
-pub fn resolve_line(
-    graph: &GraphOutput,
-    file_path: &str,
-    line: u32,
-) -> Option<Resolved> {
+pub fn resolve_line(graph: &GraphOutput, file_path: &str, line: u32) -> Option<Resolved> {
     let line = usize::try_from(line).unwrap_or(usize::MAX);
     let mut best: Option<&graphify_core::types::Node> = None;
     let mut best_span = usize::MAX;
@@ -134,12 +130,7 @@ mod tests {
     use super::*;
     use graphify_core::types::{FileType, Node};
 
-    fn node(
-        id: &str,
-        source_file: &str,
-        start: usize,
-        end: usize,
-    ) -> Node {
+    fn node(id: &str, source_file: &str, start: usize, end: usize) -> Node {
         Node {
             id: NodeId(id.to_string()),
             label: id.rsplit(':').next().unwrap_or(id).to_string(),
@@ -172,8 +163,7 @@ mod tests {
         ]);
         let r = resolve_line(&g, "src/auth.rs", 42).unwrap();
         assert_eq!(
-            r.node_id.0,
-            "src/auth.rs:function:verify_token",
+            r.node_id.0, "src/auth.rs:function:verify_token",
             "innermost (smallest span) wins"
         );
     }
@@ -216,12 +206,18 @@ mod tests {
         // 正向：node_path 以 want 結尾（graph 路徑長，coverage 路徑短）
         assert!(file_matches("./src/auth.rs", "src/auth.rs")); // ./ prefix handled by reverse
         assert!(file_matches("src/auth.rs", "/repo/src/auth.rs")); // reverse should match
-        assert!(file_matches("./src/auth.rs", "/mnt/data/project/src/auth.rs")); // reverse with ./ stripping
-        assert!(!file_matches("./src/other.rs", "/mnt/data/project/src/auth.rs")); // different file
-        // 混合正向 + 反向
+        assert!(file_matches(
+            "./src/auth.rs",
+            "/mnt/data/project/src/auth.rs"
+        )); // reverse with ./ stripping
+        assert!(!file_matches(
+            "./src/other.rs",
+            "/mnt/data/project/src/auth.rs"
+        )); // different file
+            // 混合正向 + 反向
         assert!(file_matches("/absolute/path/src/auth.rs", "src/auth.rs")); // absolute vs relative
         assert!(file_matches("./src/auth.rs", "src/auth.rs")); // both relative
-        // 負向測試
+                                                               // 負向測試
         assert!(!file_matches("./src/auth.rs", "src/auth/verify.rs")); // wrong path
         assert!(file_matches("./src/auth.rs", "src/auth.rs")); // exact match
         assert!(!file_matches("src/auth.rs", "./src/other.rs")); // reverse wrong
@@ -265,8 +261,18 @@ mod tests {
     #[test]
     fn symbol_prefers_function_over_same_leaf_name() {
         let g = graph_with(vec![
-            node("src/db/query.rs:module:query_users", "src/db/query.rs", 1, 200),
-            node("src/db/query.rs:function:query_users", "src/db/query.rs", 80, 120),
+            node(
+                "src/db/query.rs:module:query_users",
+                "src/db/query.rs",
+                1,
+                200,
+            ),
+            node(
+                "src/db/query.rs:function:query_users",
+                "src/db/query.rs",
+                80,
+                120,
+            ),
         ]);
         let r = resolve_symbol(&g, "src/db/query.rs", "query_users").unwrap();
         assert_eq!(r.node_id.0, "src/db/query.rs:function:query_users");

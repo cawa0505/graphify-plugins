@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-08-10
+goal: 實作 OpenDoc 原生外掛，提供規格文件與程式碼 AST 硬鏈結與雙向 Drift Audit

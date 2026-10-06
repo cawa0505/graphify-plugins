@@ -24,11 +24,7 @@ pub struct Resolved {
 /// 比對時先試精確比對，再試「以 / 分隔路徑的 suffix 相符」以容忍前綴差異。
 /// 回傳 `None` = 檔案不存在於 graph 或行號超出所有節點（orphan line）。
 #[must_use]
-pub fn resolve_line(
-    graph: &GraphOutput,
-    file_path: &str,
-    line: u32,
-) -> Option<Resolved> {
+pub fn resolve_line(graph: &GraphOutput, file_path: &str, line: u32) -> Option<Resolved> {
     let line = usize::try_from(line).unwrap_or(usize::MAX);
     let mut best: Option<&graphify_core::types::Node> = None;
     let mut best_span = usize::MAX;
@@ -90,12 +86,7 @@ mod tests {
     use super::*;
     use graphify_core::types::{FileType, Node};
 
-    fn node(
-        id: &str,
-        source_file: &str,
-        start: usize,
-        end: usize,
-    ) -> Node {
+    fn node(id: &str, source_file: &str, start: usize, end: usize) -> Node {
         Node {
             id: NodeId(id.to_string()),
             label: id.rsplit(':').next().unwrap_or(id).to_string(),
@@ -128,8 +119,7 @@ mod tests {
         ]);
         let r = resolve_line(&g, "src/auth.rs", 42).unwrap();
         assert_eq!(
-            r.node_id.0,
-            "src/auth.rs:function:verify_token",
+            r.node_id.0, "src/auth.rs:function:verify_token",
             "innermost (smallest span) wins"
         );
     }

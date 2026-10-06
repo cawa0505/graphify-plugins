@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-10
+goal: 實作 Code Relay Handoff 外掛（Rust 嵌入式 Crate），提供上下文接力與 TOON 記憶鏡像

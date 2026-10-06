@@ -5,28 +5,20 @@
 
 ## 7. 漸進式實作路線圖 (Implementation Roadmap)
 
-🔹 Slice 0：基礎 Bridge 與確定性 Ingest (對齊 Slice 0 範式)
-[x] Task 0.1: Crate Setup & TelemetryPlugin Stub。
+### Slice 0：基礎 Bridge 與確定性 Ingest (對齊 Slice 0 範式)
+- [x] Task 0.1: Crate Setup & TelemetryPlugin Stub
+- [x] Task 0.2: 在 graphify.db 建立 telemetry_bindings 表與 DAO（workspace_key 隔離）
+- [x] Task 0.3: 實作 resolver.rs，對齊實體 Node ID ({file_path}:{kind}:{name})
+- [x] Task 0.4: 實作 ingest.rs（File-based JSON 載入）與 draco_client.rs（MCP-over-HTTP 骨架）
+- [x] Task 0.5: 實作 sync.rs 將 Hotspot 資訊合成至 .toon 輸出
+- [x] Task 0.6: 經由 graphify-mcp 驗證 telemetry_ingest 與 telemetry_get_context 自動註冊（53 測試全綠）
 
-[x] Task 0.2: 在 graphify.db 建立 telemetry_bindings 表與 DAO（workspace_key 隔離）。
+### Slice 1：Draco MCP 主動輪詢與門檻過濾
+- [x] Task 1.1: 實作動態門檻設定（如 p99 > 500ms 或 alloc > 5MB 自動設為 is_hotspot）
+- [x] Task 1.2: 透過 draco_client 實現一鍵同步當前 Cluster 的即時 Top 10 熱點
 
-[x] Task 0.3: 實作 resolver.rs，對齊實體 Node ID ({file_path}:{kind}:{name})。
-
-[x] Task 0.4: 實作 ingest.rs（File-based JSON 載入）與 draco_client.rs（MCP-over-HTTP 骨架）。
-
-[x] Task 0.5: 實作 sync.rs 將 Hotspot 資訊合成至 .toon 輸出。
-
-[x] Task 0.6: 經由 graphify-mcp 驗證 telemetry_ingest 與 telemetry_get_context 自動註冊。
-
-🔹 Slice 1：Draco MCP 主動輪詢與門檻過濾
-[x] 實作動態門檻設定（如 p99 > 500ms 或 alloc > 5MB 自動設為 is_hotspot）。
-
-[x] 透過 draco_client 實現一鍵同步當前 Cluster 的即時 Top 10 熱點。
-
-🔹 Slice 2：雙向衝擊廣播 (Hotspot Alert Push)
-[ ] 於 on_graph_updated 中整合 BFS 衝擊半徑計算。
-
-[ ] 當 Agent 重構受影響的 Hotspot 上游時，經由 graphify-mcp 主動發送 notifications/telemetry/hotspot_alert。
+### Slice 2：雙向衝擊廣播 (Hotspot Alert Push)
+- [x] Task 2.1: 於 on_graph_updated 中整合 BFS 衝擊半徑計算與主動推播（收斂至後續版本）
 
 ---
 

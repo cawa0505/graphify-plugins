@@ -161,8 +161,9 @@ fn content_for_install() -> String {
 /// Target paths for one agent at one scope.
 fn target_paths(home: &Path, cwd: &Path, agent: Agent, scope: Scope) -> Vec<PathBuf> {
     match (agent, scope) {
-        (Agent::Opencode, Scope::User) => vec![home
-            .join(".config/opencode/skills/graphify-opendoc/SKILL.md")],
+        (Agent::Opencode, Scope::User) => {
+            vec![home.join(".config/opencode/skills/graphify-opendoc/SKILL.md")]
+        }
         (Agent::Opencode, Scope::Project) => {
             vec![cwd.join(".opencode/skills/graphify-opendoc/SKILL.md")]
         }
@@ -246,7 +247,9 @@ fn is_managed(path: &Path) -> Result<bool, SkillInstallError> {
 }
 
 fn home_dir() -> Result<PathBuf, SkillInstallError> {
-    env::var_os("HOME").map(PathBuf::from).ok_or(SkillInstallError::NoHome)
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or(SkillInstallError::NoHome)
 }
 
 #[cfg(test)]
@@ -258,7 +261,8 @@ mod tests {
     fn install_writes_marked_copy() {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
-        let report = install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
+        let report =
+            install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
         let path = home
             .path()
             .join(".config/opencode/skills/graphify-opendoc/SKILL.md");
@@ -273,8 +277,7 @@ mod tests {
     fn reinstall_is_idempotent() {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
-        let first =
-            install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
+        let first = install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
         let second =
             install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
         assert_eq!(first.installed, second.installed);
@@ -294,7 +297,8 @@ mod tests {
             .join(".config/opencode/skills/graphify-opendoc/SKILL.md");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "# my own skill\n").unwrap();
-        let report = install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
+        let report =
+            install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
         assert!(report.installed.is_empty());
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(fs::read_to_string(&path).unwrap(), "# my own skill\n");
@@ -304,7 +308,8 @@ mod tests {
     fn uninstall_removes_only_managed_files() {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
-        let report = install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
+        let report =
+            install_into(home.path(), cwd.path(), &[Agent::Opencode], Scope::User).unwrap();
         let path = &report.installed[0];
         // add an unmanaged file at a sibling agent target
         let claude_path = home.path().join(".claude/skills/graphify-opendoc/SKILL.md");
@@ -336,7 +341,8 @@ mod tests {
         let cwd = tempdir().unwrap();
         let rules = cwd.path().join(".clinerules");
         fs::write(&rules, "always verify with cargo test\n").unwrap();
-        let report = install_into(home.path(), cwd.path(), &[Agent::Cline], Scope::Project).unwrap();
+        let report =
+            install_into(home.path(), cwd.path(), &[Agent::Cline], Scope::Project).unwrap();
         assert!(report.installed.is_empty());
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(
@@ -349,7 +355,8 @@ mod tests {
     fn claude_project_scope_installs_nothing() {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
-        let report = install_into(home.path(), cwd.path(), &[Agent::Claude], Scope::Project).unwrap();
+        let report =
+            install_into(home.path(), cwd.path(), &[Agent::Claude], Scope::Project).unwrap();
         assert!(report.installed.is_empty());
     }
 
@@ -361,10 +368,7 @@ mod tests {
         fs::create_dir_all(home.path().join(".claude")).unwrap();
         fs::create_dir_all(cwd.path().join(".cursor")).unwrap();
         let agents = detect_agents(home.path(), cwd.path());
-        assert_eq!(
-            agents,
-            vec![Agent::Opencode, Agent::Claude, Agent::Cursor]
-        );
+        assert_eq!(agents, vec![Agent::Opencode, Agent::Claude, Agent::Cursor]);
     }
 
     #[test]

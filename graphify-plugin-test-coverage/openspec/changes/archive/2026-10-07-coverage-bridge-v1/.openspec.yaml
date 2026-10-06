@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-08-18
+goal: 實作 Coverage Symbol Bridge 外掛，提供測試覆蓋率綁定與盲區分析

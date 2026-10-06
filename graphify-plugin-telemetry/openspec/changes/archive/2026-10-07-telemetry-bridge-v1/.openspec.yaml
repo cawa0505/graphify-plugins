@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-08-10
+goal: 實作 Telemetry Bridge 外掛，提供 Draco MCP / 運行時效能熱點與圖譜關聯

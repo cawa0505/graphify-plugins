@@ -43,7 +43,8 @@ pub fn resolve_coverage(
     // 2. 逐 node 計算覆蓋率
     let mut bindings = resolve_nodes(&graph.nodes, &file_to_nodes, &coverage.files, workspace_key);
     // 3. 檔案級殘餘行 fallback
-    let file_level = resolve_file_level(&graph.nodes, &file_to_nodes, &coverage.files, workspace_key);
+    let file_level =
+        resolve_file_level(&graph.nodes, &file_to_nodes, &coverage.files, workspace_key);
     bindings.extend(file_level);
     bindings
 }
@@ -241,7 +242,11 @@ mod tests {
     }
 
     fn graph_with(nodes: Vec<Node>) -> GraphOutput {
-        GraphOutput { nodes, edges: Vec::new(), metadata: Default::default() }
+        GraphOutput {
+            nodes,
+            edges: Vec::new(),
+            metadata: Default::default(),
+        }
     }
 
     fn coverage(files: Vec<(&str, Vec<(u32, u64)>)>) -> CoverageData {
@@ -258,12 +263,16 @@ mod tests {
 
     #[test]
     fn node_with_full_coverage() {
-        let g = graph_with(vec![
-            node("src/auth.rs:function:verify", "src/auth.rs", 30, 42),
-        ]);
-        let c = coverage(vec![
-            ("src/auth.rs", vec![(30, 1), (31, 5), (35, 0), (42, 3)]),
-        ]);
+        let g = graph_with(vec![node(
+            "src/auth.rs:function:verify",
+            "src/auth.rs",
+            30,
+            42,
+        )]);
+        let c = coverage(vec![(
+            "src/auth.rs",
+            vec![(30, 1), (31, 5), (35, 0), (42, 3)],
+        )]);
         let bindings = resolve_coverage(&g, &c, "w-1");
         assert_eq!(bindings.len(), 1);
         let b = &bindings[0];
@@ -278,12 +287,13 @@ mod tests {
 
     #[test]
     fn node_with_zero_coverage() {
-        let g = graph_with(vec![
-            node("src/auth.rs:function:blind", "src/auth.rs", 1, 5),
-        ]);
-        let c = coverage(vec![
-            ("src/auth.rs", vec![(1, 0), (2, 0), (3, 0)]),
-        ]);
+        let g = graph_with(vec![node(
+            "src/auth.rs:function:blind",
+            "src/auth.rs",
+            1,
+            5,
+        )]);
+        let c = coverage(vec![("src/auth.rs", vec![(1, 0), (2, 0), (3, 0)])]);
         let bindings = resolve_coverage(&g, &c, "w-1");
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].covered_lines, 0);
@@ -293,9 +303,7 @@ mod tests {
 
     #[test]
     fn node_with_no_coverage_data_returns_no_binding() {
-        let g = graph_with(vec![
-            node("src/auth.rs:function:f", "src/auth.rs", 1, 100),
-        ]);
+        let g = graph_with(vec![node("src/auth.rs:function:f", "src/auth.rs", 1, 100)]);
         // coverage data 只有另一隻檔案
         let c = coverage(vec![("src/other.rs", vec![(1, 1)])]);
         let bindings = resolve_coverage(&g, &c, "w-1");
@@ -308,30 +316,36 @@ mod tests {
             node("src/a.rs:function:f1", "src/a.rs", 1, 10),
             node("src/a.rs:function:f2", "src/a.rs", 20, 30),
         ]);
-        let c = coverage(vec![
-            ("src/a.rs", vec![(1, 1), (5, 0), (20, 3), (25, 0)]),
-        ]);
+        let c = coverage(vec![("src/a.rs", vec![(1, 1), (5, 0), (20, 3), (25, 0)])]);
         let bindings = resolve_coverage(&g, &c, "w-1");
         assert_eq!(bindings.len(), 2);
-        let f1 = bindings.iter().find(|b| b.canonical_node_id == "src/a.rs:function:f1").unwrap();
+        let f1 = bindings
+            .iter()
+            .find(|b| b.canonical_node_id == "src/a.rs:function:f1")
+            .unwrap();
         assert_eq!(f1.total_lines, 2); // lines 1,5
         assert_eq!(f1.covered_lines, 1);
-        let f2 = bindings.iter().find(|b| b.canonical_node_id == "src/a.rs:function:f2").unwrap();
+        let f2 = bindings
+            .iter()
+            .find(|b| b.canonical_node_id == "src/a.rs:function:f2")
+            .unwrap();
         assert_eq!(f2.total_lines, 2); // lines 20,25
         assert_eq!(f2.covered_lines, 1);
     }
 
     #[test]
     fn file_level_residual_lines() {
-        let g = graph_with(vec![
-            node("src/a.rs:function:f", "src/a.rs", 10, 20),
-        ]);
-        let c = coverage(vec![
-            ("src/a.rs", vec![(1, 1), (5, 0), (10, 1), (15, 0), (30, 3)]),
-        ]);
+        let g = graph_with(vec![node("src/a.rs:function:f", "src/a.rs", 10, 20)]);
+        let c = coverage(vec![(
+            "src/a.rs",
+            vec![(1, 1), (5, 0), (10, 1), (15, 0), (30, 3)],
+        )]);
         // Node 涵蓋 line 10,15；殘餘行為 1,5,30
         let bindings = resolve_coverage(&g, &c, "w-1");
-        let file_bindings: Vec<_> = bindings.iter().filter(|b| b.canonical_node_id.starts_with("file:")).collect();
+        let file_bindings: Vec<_> = bindings
+            .iter()
+            .filter(|b| b.canonical_node_id.starts_with("file:"))
+            .collect();
         assert_eq!(file_bindings.len(), 1, "file-level entry");
         let fb = &file_bindings[0];
         assert_eq!(fb.canonical_node_id, "file:src/a.rs");
@@ -342,12 +356,8 @@ mod tests {
 
     #[test]
     fn suffix_path_matches() {
-        let g = graph_with(vec![
-            node("f:function:f", "/repo/src/a.rs", 1, 5),
-        ]);
-        let c = coverage(vec![
-            ("src/a.rs", vec![(1, 1), (3, 0)]),
-        ]);
+        let g = graph_with(vec![node("f:function:f", "/repo/src/a.rs", 1, 5)]);
+        let c = coverage(vec![("src/a.rs", vec![(1, 1), (3, 0)])]);
         let bindings = resolve_coverage(&g, &c, "w-1");
         assert_eq!(bindings.len(), 1, "suffix match succeeded");
         assert_eq!(bindings[0].total_lines, 2);
