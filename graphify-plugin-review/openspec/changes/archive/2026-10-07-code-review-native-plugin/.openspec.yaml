@@ -1,0 +1,4 @@
+schema: spec-driven
+skip_specs: true
+created: 2026-09-21
+goal: 實作 Code Review 原生外掛，支援 graphify 與代碼審查流程接軌
